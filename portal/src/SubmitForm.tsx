@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { submitRun } from './api'
+import { fetchTicket, submitRun } from './api'
 
 export function SubmitForm({ onSubmitted }: { onSubmitted: (id: number) => void }) {
   const [gerritUrl, setGerritUrl] = useState('')
@@ -8,6 +8,20 @@ export function SubmitForm({ onSubmitted }: { onSubmitted: (id: number) => void 
   const [wikiUrls, setWikiUrls] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [fetching, setFetching] = useState(false)
+
+  async function fetchJira() {
+    setFetching(true)
+    setError(null)
+    try {
+      const { text } = await fetchTicket(jiraUrl.trim())
+      setTicketText(text)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setFetching(false)
+    }
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -50,23 +64,28 @@ export function SubmitForm({ onSubmitted }: { onSubmitted: (id: number) => void 
       </label>
       <label>
         JIRA ticket link
-        <input
-          type="url"
-          placeholder="https://jira.example.com/browse/ABC-123"
-          value={jiraUrl}
-          onChange={(e) => setJiraUrl(e.target.value)}
-        />
+        <span className="input-row">
+          <input
+            type="url"
+            placeholder="https://jira.example.com/browse/ABC-123"
+            value={jiraUrl}
+            onChange={(e) => setJiraUrl(e.target.value)}
+          />
+          <button type="button" className="ghost small" disabled={!jiraUrl.trim() || fetching} onClick={fetchJira}>
+            {fetching ? '…' : 'Fetch'}
+          </button>
+        </span>
       </label>
       <label>
         Wiki links (one per line)
         <textarea rows={2} value={wikiUrls} onChange={(e) => setWikiUrls(e.target.value)} />
       </label>
-      {gerritUrl.trim() && !ticketText.trim() && (
+      {gerritUrl.trim() && !ticketText.trim() && !jiraUrl.trim() && (
         <p className="warning">
           No ticket text: the AI can only guess the rules from the code. Paste the ticket for real results.
         </p>
       )}
-      <p className="hint">The AI reads the ticket text and the code change. JIRA/wiki links are saved for later.</p>
+      <p className="hint">The AI reads the ticket text, the JIRA issue and the wiki pages (fetched when the run starts), and the code change.</p>
       {error && <p className="error">{error}</p>}
       <button type="submit" className="primary" disabled={busy}>
         {busy ? 'Submitting…' : 'Start run'}

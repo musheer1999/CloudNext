@@ -8,6 +8,9 @@ export interface Run {
   jiraUrl: string | null
   wikiUrls: string[]
   ticketText: string | null
+  constraints: string | null
+  disputedRunId: number | null
+  gerritPostedAt: string | null
   tokensUsed: number
   gerritProject: string | null
   gerritChange: number | null
@@ -35,7 +38,7 @@ export interface Run {
 export interface TestCase {
   className: string
   name: string
-  status: 'PASSED' | 'FAILED' | 'ERROR' | 'SKIPPED'
+  status: 'PASSED' | 'FAILED' | 'ERROR' | 'SKIPPED' | 'FLAKY'
   durationMs: number
   message: string | null
 }
@@ -45,6 +48,7 @@ export type TestStatus = TestCase['status']
 export type Verdict =
   | 'COUNTEREXAMPLE'
   | 'PRE_EXISTING'
+  | 'FLAKY'
   | 'FIXED'
   | 'NOTHING_FOUND'
   | 'NEW_TEST'
@@ -71,6 +75,7 @@ export interface RuleView {
   codeLocation: string | null
   status: 'KEPT' | 'DROPPED'
   dropReason: string | null
+  specialist: Specialist | null
   testClass: string | null
   testCode: string | null
   compileAttempts: number | null
@@ -81,11 +86,14 @@ export interface RuleView {
   attackStatus: 'DONE' | 'COULDNT_COMPILE' | null
 }
 
+export type Specialist = 'BOUNDARY' | 'STATE' | 'CONCURRENCY' | 'COMPAT'
+
 export interface RunDetail {
   run: Run
   tests: TestCase[]
   comparisons: Comparison[]
   rules: RuleView[]
+  feedback: Feedback[]
 }
 
 export interface LogEvent {
@@ -133,3 +141,65 @@ export function watchRun(id: number, onLog: (e: LogEvent) => void, onStatus: (ru
 }
 
 export const isFinished = (run: Run) => run.status === 'SUCCEEDED' || run.status === 'FAILED'
+
+export interface Feedback {
+  id: number
+  ruleKey: string
+  ruleText: string
+  type: 'ACCEPT' | 'DISPUTE' | 'FALSE_POSITIVE'
+  text: string | null
+  createdAt: string
+}
+
+/** Accept / Dispute / False Positive. A dispute returns the id of the re-run it started. */
+export async function sendFeedback(
+  runId: number,
+  ruleKey: string,
+  type: Feedback['type'],
+  text: string,
+): Promise<number | null> {
+  const res = await fetch(`/api/runs/${runId}/feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ruleKey, type, text }),
+  })
+  return (await json<{ rerunId: number | null }>(res)).rerunId
+}
+
+export const previewGerritReview = (runId: number) =>
+  fetch(`/api/runs/${runId}/gerrit-review`).then((r) => json<{ message: string }>(r))
+
+export const postGerritReview = (runId: number) =>
+  fetch(`/api/runs/${runId}/gerrit-review`, { method: 'POST' }).then((r) => json<{ posted: string }>(r))
+
+/** The plain text FailureForge reads from a JIRA issue or Confluence page. */
+export const fetchTicket = (url: string) =>
+  fetch(`/api/ingest?url=${encodeURIComponent(url)}`).then((r) => json<{ text: string }>(r))
+
+export interface BenchmarkCase {
+  name: string
+  expected: string
+  plantedBug: string
+  runId: number | null
+  status: string
+  foundBy: string[]
+  caught: boolean
+  falsePositives: number
+  seconds: number | null
+  tokens: number
+}
+
+export interface BenchmarkSummary {
+  batch: number | null
+  cases: BenchmarkCase[]
+  bugs: number
+  caught: number
+  falsePositives: number
+  finished: number
+  avgSeconds: number | null
+  totalTokens: number
+}
+
+export const getBenchmark = () => fetch('/api/benchmark').then((r) => json<BenchmarkSummary>(r))
+
+export const startBenchmark = () => fetch('/api/benchmark', { method: 'POST' }).then((r) => json<BenchmarkSummary>(r))

@@ -17,10 +17,10 @@ export function StatusBadge({ run }: { run: Run }) {
       label = failedTests > 0 ? `${failedTests} TEST${failedTests > 1 ? 'S' : ''} FAILED` : 'TESTS PASSED'
       tone = failedTests > 0 ? 'warn' : 'good'
     } else if (broken > 0) {
-      label = `CHANGE BROKE ${broken} TEST${broken > 1 ? 'S' : ''}`
+      label = `${broken} FINDING${broken > 1 ? "S" : ""}`
       tone = 'bad'
     } else {
-      label = 'NOTHING BROKEN'
+      label = "NOTHING BROKEN"
       tone = 'good'
     }
   }
