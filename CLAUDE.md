@@ -25,7 +25,7 @@ FailureForge is an AI agent for a Samsung internal agent contest. It takes a Ger
 | Phase 1 — pipeline skeleton | **Done 2026-10-11.** Portal → API → Postgres queue → worker → Gerrit REST → git checkout → **Docker sandbox** (D-026) → JUnit results + live log in portal. Verified on GerritHub change 1236098, run #6: 88/88 tests pass in 72 s, test step with `--network none`, no containers left behind. Known gaps: Gradle path in Docker not yet tested on a real repo; no automated test of the timeout path. |
 | Phase 2 — rules + Boundary specialist | **In progress.** Steps: 2a sample repo with planted bug (needs owner's GerritHub repo) · **2b parent vs patch + verdict engine: done 2026-10-11 (D-027)** · 2c read diff/JIRA/wiki · 2d LLM client + rule extraction · 2e Boundary specialist + test writer + repair loop · 2f end-to-end demo. LLM for dev: Ollama on the laptop (free); model being chosen by a test (qwen3.5:9b vs qwen3:8b). |
 | Code repository | Local git repo at `D:\CloudNext`, branch `main` (`server/`, `portal/`, `docs/`). First commit fd1c691 on 2026-10-11 (Phase 1). Pushed to GitHub (public): https://github.com/musheer1999/CloudNext |
-| LLM in use | Claude API (see D-004); no LLM calls yet (Phase 1 has no AI) |
+| LLM in use | None yet. Dev: Ollama on the laptop (free); demo: office MuseGlimmer 30B (D-028). Claude API not used. |
 | Dev machine (personal laptop) | JDK 23, Node 24.21, PostgreSQL 16 (Windows service; may need a manual start), git, WSL2 Ubuntu + Docker Engine 29.1 (called as `wsl -d Ubuntu -e docker`). Port 8080 taken by Apache httpd. |
 
 ## 3. Architecture (summary)
@@ -61,8 +61,8 @@ Verdict table (verdict engine, no AI):
 | Portal | React 19 + TypeScript, Vite 8 (D-024) |
 | API | Spring Boot 4.1, Java 21, Maven wrapper, SSE for live progress (D-014, D-015, D-016) |
 | LLM framework | Spring AI 2.0 (D-014) |
-| LLM (now) | Claude API via Spring AI Anthropic starter |
-| LLM (later) | Samsung office LLM API, swapped via config |
+| LLM (dev) | Ollama on the laptop, OpenAI-compatible API (D-028) |
+| LLM (demo) | Office MuseGlimmer 30B, OpenAI-compatible, swapped via config only (D-028) |
 | DB + queue | PostgreSQL 16, plain SQL via JdbcClient, Flyway migrations, `SKIP LOCKED` queue (D-019) |
 | Code parsing | JavaParser |
 | Sandbox | Docker Engine on Linux (WSL2 for dev), `docker` CLI commands; no network, CPU/mem limits, timeout, shared build cache (D-025) |
@@ -217,11 +217,19 @@ Status: **Decided** = team/owner confirmed · **Proposed** = in design doc, not 
 - Why: Proves whether the change caused a failure. Run #7 (change 1236098, a bug fix) showed 88/88 NOTHING_FOUND: the existing tests never noticed the fixed bug, which is the gap generated tests must fill (good pitch point).
 - Cost: each run takes about twice as long (~2 min for that repo); dependencies are cached so the parent's prepare step is fast.
 
+### D-028 — Office LLM facts; LlmClient speaks OpenAI-compatible chat completions
+- Date: 2026-10-11 · Status: Decided (facts from owner's seniors) / design Proposed
+- Facts: the office LLM is **MuseGlimmer 30B** (`openai/muse-glimmer-30b`) on a dedicated office GPU, served as an **OpenAI-compatible** `POST <base>/v1/chat/completions` endpoint. **No API key.** Must be called **without the corporate proxy** (their curl uses `--noproxy "*"`). Their request uses `max_tokens: 2048`, `temperature: 0`, `stream: false`, and an extra field `chat_template_kwargs: {"reasoning_strength": "low"}`.
+- **The endpoint URL is internal: it goes only in the git-ignored `server/application-local.yml` on the office laptop, never in this public repo.** Get it from the team chat.
+- Design: `LlmClient` targets OpenAI-compatible chat completions, configured by base URL, model, optional API key, `bypass-proxy` flag, and an `extra-body` map (for `chat_template_kwargs`). Dev uses Ollama, which serves the same `/v1/chat/completions` API, so the office switch is config only. Keep each LLM answer well under 2048 tokens. Don't depend on tool calling (unknown support on the office server); ask for JSON in the prompt and validate/retry in code.
+- Office step (senior's advice): call the endpoint once with curl on the office laptop and check the response matches what the code expects.
+- This refines D-004 (LLM provider now = Ollama for dev, office LLM for the demo; the Claude API is not used, since a Claude.ai subscription doesn't cover API calls).
+
 ## 6. Open questions
 
 - [ ] Contest deadline and demo format?
 - [ ] Can real Samsung code be sent to the Claude API, or only sample/open-source repos until the office LLM is used?
-- [ ] Which office LLM API, and does it support tool calling + structured JSON output?
+- [x] Which office LLM API: MuseGlimmer 30B, OpenAI-compatible, no key (D-028). Still unknown: tool calling / JSON mode support; test with curl on the office laptop.
 - [ ] Which repositories for the benchmark?
 - [ ] Owners per area (Platform, Agent, Integrations + UI, Quality)?
 - [ ] Confirm MVP scope D-011.
