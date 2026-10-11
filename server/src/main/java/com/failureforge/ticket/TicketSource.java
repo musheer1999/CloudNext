@@ -80,6 +80,11 @@ public class TicketSource {
 		return all;
 	}
 
+	/** For the portal's "Fetch" button: the text of one JIRA issue or wiki page. */
+	public String preview(String url) {
+		return JIRA_KEY.matcher(url.strip()).find() ? jiraIssue(url) : confluencePage(url);
+	}
+
 	/** {@code https://host[/jira]/browse/KEY-1} -> "JIRA KEY-1: summary\n\ndescription" via REST API v2. */
 	String jiraIssue(String url) {
 		Matcher m = JIRA_KEY.matcher(url.strip());

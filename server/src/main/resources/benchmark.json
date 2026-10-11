@@ -1,0 +1,37 @@
+[
+  {
+    "name": "SHOP-42 member discount",
+    "gerritUrl": "https://review.gerrithub.io/c/musheer1999/failureforge-sample/+/1254028",
+    "expected": "BOUNDARY",
+    "plantedBug": "Member bonus not capped at 100%: member + coupon >= 96% gives a negative price.",
+    "ticket": "Summary: Loyalty members get an extra 5% off on top of any coupon.\n\nDescription: To reward loyalty, members should pay 5% less than non-members. The member bonus is added to the coupon discount, if any.\n\nAcceptance criteria:\n1. A member with a 10% coupon gets 15% off in total.\n2. A member without a coupon gets 5% off.\n3. Non-members are not affected.\n4. The final price is never negative: the total discount can never be more than 100%.\n5. Coupon discounts outside 0-100% are still rejected."
+  },
+  {
+    "name": "SHOP-43 refund cancelled orders",
+    "gerritUrl": "https://review.gerrithub.io/c/musheer1999/failureforge-sample/+/1254070",
+    "expected": "STATE",
+    "plantedBug": "A cancelled paid order stays CANCELLED after a refund, so it can be refunded again and again.",
+    "ticket": "Summary: Refund cancelled orders.\n\nDescription: Customers who cancel an order they already paid for should get their money back.\n\nAcceptance criteria:\n1. A paid order can be refunded.\n2. A paid order that was cancelled can also be refunded.\n3. An order that was never paid cannot be refunded.\n4. An order is refunded at most once: the total refunded can never be more than the amount paid."
+  },
+  {
+    "name": "SHOP-44 lock-free stock reservation",
+    "gerritUrl": "https://review.gerrithub.io/c/musheer1999/failureforge-sample/+/1254071",
+    "expected": "CONCURRENCY",
+    "plantedBug": "Check-then-set without compare-and-set: two checkouts at the same moment both get the last item.",
+    "ticket": "Summary: Faster checkout - reserve stock without a global lock.\n\nDescription: Checkout threads wait too long on the inventory lock. Reserve stock without one global lock, and keep a log of reservations for the analytics team.\n\nAcceptance criteria:\n1. A reservation succeeds when there is enough stock.\n2. A reservation fails, and changes nothing, when there is not enough stock.\n3. Many checkouts can run at the same time.\n4. Stock is never oversold: when several customers reserve at the same time, the successful reservations never exceed the stock."
+  },
+  {
+    "name": "SHOP-45 rename pricing method",
+    "gerritUrl": "https://review.gerrithub.io/c/musheer1999/failureforge-sample/+/1254072",
+    "expected": "COMPAT",
+    "plantedBug": "Public method Pricing.finalPrice renamed: every existing caller (mobile app, invoice service) breaks.",
+    "ticket": "Summary: Rename Pricing.finalPrice to priceAfterDiscount.\n\nDescription: The name finalPrice is unclear about what the price includes. Rename it to priceAfterDiscount. The pricing library is used by the mobile app and the invoice service.\n\nAcceptance criteria:\n1. The method is called priceAfterDiscount.\n2. Prices are calculated exactly as before.\n3. Existing callers of the pricing library keep working."
+  },
+  {
+    "name": "SHOP-46 free shipping (no bug)",
+    "gerritUrl": "https://review.gerrithub.io/c/musheer1999/failureforge-sample/+/1254073",
+    "expected": "NONE",
+    "plantedBug": "None: a correct change, used to count false positives.",
+    "ticket": "Summary: Free shipping from Rs 500.\n\nDescription: Orders of Rs 500 (50000 paise) or more ship free. Smaller orders pay Rs 40 (4000 paise).\n\nAcceptance criteria:\n1. Orders of 50000 paise or more ship free.\n2. Orders below 50000 paise pay 4000 paise.\n3. The shipping cost is never negative.\n4. A negative order total is rejected."
+  }
+]
