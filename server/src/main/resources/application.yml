@@ -1,0 +1,60 @@
+# FailureForge server configuration.
+# Every value can be overridden by an environment variable, e.g. DB_PASSWORD, GERRIT_USERNAME.
+# Secrets are never written in this file.
+
+spring:
+  application:
+    name: failureforge-server
+  config:
+    # Per-machine secrets (DB password, Gerrit HTTP password) live in this git-ignored file.
+    import: optional:file:./application-local.yml
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/failureforge}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:}
+  # Flyway creates/updates tables from src/main/resources/db/migration on startup.
+  flyway:
+    enabled: true
+  threads:
+    virtual:
+      enabled: true
+  mvc:
+    # Errors come back as JSON with a readable "detail" field the portal can show.
+    problemdetails:
+      enabled: true
+
+server:
+  port: ${PORT:8090}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+failureforge:
+  # Folder where each run's checkout lives: <work-dir>/run-<id>
+  work-dir: ${FF_WORK_DIR:./work}
+  worker:
+    # How often the worker checks the queue for new runs (milliseconds).
+    poll-interval-ms: 2000
+  gerrit:
+    # Optional. Needed for private Gerrit servers (Gerrit "HTTP password", not your login password).
+    username: ${GERRIT_USERNAME:}
+    password: ${GERRIT_PASSWORD:}
+  sandbox:
+    # Where tests run (D-017, D-025, D-026):
+    #   docker = isolated Linux container: tests run with no network, CPU/memory/process limits, time limit.
+    #   local  = directly on this machine, no isolation. DEV ONLY, only for sample repos you trust.
+    mode: ${FF_SANDBOX_MODE:docker}
+    # Time limit for each sandbox step (prepare, test).
+    timeout-minutes: 10
+    # local mode only: used when a Maven repo has no mvnw of its own (FailureForge's own Maven wrapper).
+    fallback-maven-wrapper: ${FF_FALLBACK_MVNW:./mvnw}
+    docker:
+      # Linux: "docker". Windows dev PC with WSL2: "wsl -d Ubuntu -e docker" (set in application-local.yml).
+      command: ${FF_DOCKER_COMMAND:docker}
+      image: maven:3.9-eclipse-temurin-21
+      cpus: "2"
+      memory: 4g
+      pids-limit: 2048
