@@ -68,6 +68,21 @@ public class AttackLoop {
 		int attempts = 0;
 		while (true) {
 			attempts++;
+			if (!BoundarySpecialist.callsCodeUnderTest(draft.code(), change)) {
+				// A test that re-implements the logic instead of calling it proves nothing: send it back.
+				if (attempts > config.maxRepairs()) {
+					out.accept("[agent] " + rule.key() + ": the test never calls the code under test -> couldn't check");
+					return new Result(rule, testClass, draft.code(), attempts, Status.COULDNT_COMPILE, null, null,
+							Verdict.COULDNT_CHECK, null, List.of(), tokens);
+				}
+				out.accept("[agent] " + rule.key() + ": the test doesn't call the code under test; asking for a fix ("
+						+ attempts + "/" + config.maxRepairs() + ")");
+				draft = specialist.repair(draft.code(), "The test does not call the code under test ("
+						+ String.join(", ", changedClassNames(change)) + "). It must call it and check its result, "
+						+ "not re-implement its logic.", packageName, simpleName);
+				tokens += draft.tokens();
+				continue;
+			}
 			write(patchDir.resolve(relativeFile), draft.code());
 			out.accept("[agent] " + rule.key() + ": compile + run on the PATCH (attempt " + attempts + ")");
 			List<String> lines = new ArrayList<>();
@@ -118,6 +133,28 @@ public class AttackLoop {
 		return new Result(rule, testClass, draft.code(), attempts, Status.DONE,
 				worst == null ? null : worst.parentStatus(), worst == null ? null : worst.patchStatus(),
 				verdict, minimal, comparisons, tokens);
+	}
+
+	private static List<String> changedClassNames(ChangeContext change) {
+		return change.changedFiles().stream()
+			.map(f -> f.path().substring(f.path().lastIndexOf('/') + 1).replace(".java", ""))
+			.toList();
+	}
+
+	/**
+	 * Attack order: "always/never" rules first (invariants are where boundary bugs hide), then the rest.
+	 * Plain keyword scoring, so the order is predictable.
+	 */
+	public static int invariantScore(Rule rule) {
+		String t = (rule.text() + " " + rule.sourceQuote()).toLowerCase();
+		int score = 0;
+		for (String w : List.of("never", "always", "must", "cannot", "can't", "at most", "at least", "no more than",
+				"not more than", "more than", "less than", "negative", "exceed", "limit", "maximum", "minimum")) {
+			if (t.contains(w)) {
+				score++;
+			}
+		}
+		return score;
 	}
 
 	private void addJqwik(Path repo, Consumer<String> out) {

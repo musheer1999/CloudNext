@@ -192,7 +192,11 @@ public class RunPipeline {
 					}
 				}
 			}
+			// "Always/never" rules first; stable sort keeps the LLM's order otherwise.
+			targets.sort(java.util.Comparator.comparingInt((Integer i) -> -AttackLoop.invariantScore(extracted.rules().get(i))));
 			targets = targets.subList(0, Math.min(targets.size(), props.agent().maxAttacks()));
+			out.accept("[agent] attacking " + targets.stream().map(i -> extracted.rules().get(i).key()).toList()
+					+ " (always/never rules first)");
 
 			step(id, "ATTACKING");
 			for (int i : targets) {

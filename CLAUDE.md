@@ -231,6 +231,17 @@ Status: **Decided** = team/owner confirmed · **Proposed** = in design doc, not 
 - Baseline (run #8, no AI): 5 NOTHING_FOUND + 2 NEW_TEST, 0 counterexamples, 33 s. **Phase 2 done criterion:** the same change gives a COUNTEREXAMPLE for the "never negative" rule with a shrunk input around discount = 96, member = true.
 - Uploading changes: `git push https://musheer1999@review.gerrithub.io/a/musheer1999/failureforge-sample HEAD:refs/for/main` (commit needs a `Change-Id:` line; password = GerritHub HTTP token, entered in the Windows login prompt).
 
+### D-030 — Agent design for Phase 2 (rules → Boundary attack → verdict)
+- Date: 2026-10-11 · Status: Proposed
+- `LlmClient` is a small hand-written client for OpenAI-compatible chat completions (Spring `RestClient` + JDK HttpClient with optional `NO_PROXY`), not Spring AI: it mirrors the office curl exactly, sends `extra-body` fields as-is, and strips `<think>` blocks. No tool calling; the LLM answers JSON or a ```java block and code validates it. Partly supersedes the "Spring AI ChatClient" part of D-004.
+- `RuleExtractor`: one call, ticket text + `git diff` (capped 8k chars) → up to 6 rules as JSON; each `source_quote` must be found in the ticket or diff (normalized, or ≥85% of its words), else DROPPED (D-008). 2 attempts for valid JSON.
+- `BoundarySpecialist`: one call per rule with the full patch version of the changed main Java files (≤3 files, 8k chars each) → one jqwik `@Property(tries = 1000)` class named `FailureForge<Rk>Test` in the same package; only valid inputs via `@IntRange`/`@LongRange`; violation → `throw new AssertionError(...)` whose message lists every input. Because jqwik re-runs the shrunk sample last, that message is the minimal counterexample (jqwik's own "Shrunk Sample" report doesn't reach the surefire XML).
+- `AttackLoop`: write test into FailureForge's patch copy, add jqwik **first** in the pom (`JqwikSupport`; Maven nearest/first wins, so jqwik's newer JUnit Platform is used; verified with JUnit 5.12), sandbox runs only that class; no test results + non-zero exit = compile error → javac error lines back to the LLM, max 3 repairs (D-010), then COULDNT_CHECK. Then the same test on the parent; `VerdictEngine` decides. If the test doesn't compile on the parent, only the patch counts (new code).
+- Phase 2 attacks rules typed "boundary" (max 3 per run); if none are typed boundary, the kept rules are attacked anyway.
+- Any agent failure is logged and the run still completes with the existing-test results.
+- Ticket input for now: a "Ticket text" box in the portal (`run.ticket_text`); JIRA/Confluence fetching later (office).
+- Dev model: `hf.co/Qwen/Qwen3-8B-GGUF:Q4_K_M` (official Qwen build via Hugging Face; Ollama's own registry kept stalling), with `prompt-suffix: " /no_think"` to skip slow thinking.
+
 ## 6. Open questions
 
 - [ ] Contest deadline and demo format?

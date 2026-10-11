@@ -74,6 +74,39 @@ class AgentPartsTest {
 	}
 
 	@Test
+	void missingForAllIsAddedToEveryPropertyParameter() {
+		String code = """
+				class T {
+					@Property(tries = 1000)
+					void p(@LongRange(min = 0, max = 10) long price,
+					       @IntRange(min = 0, max = 100) int discount,
+					       @ForAll boolean member) {
+					}
+					void helper(int x) {}
+				}""";
+		String fixed = BoundarySpecialist.addMissingForAll(code);
+		assertThat(fixed).contains("@ForAll @LongRange(min = 0, max = 10) long price")
+			.contains("@ForAll @IntRange(min = 0, max = 100) int discount")
+			.contains("@ForAll boolean member")
+			.doesNotContain("@ForAll @ForAll")
+			.contains("void helper(int x)");
+	}
+
+	@Test
+	void testMustCallTheChangedClass() {
+		var change = new ChangeContext("", List.of(new ChangeContext.SourceFile("src/main/java/a/Pricing.java", "")));
+		assertThat(BoundarySpecialist.callsCodeUnderTest("long r = Pricing.finalPrice(1, 2, true);", change)).isTrue();
+		assertThat(BoundarySpecialist.callsCodeUnderTest("long r = p * 3 / 100; // like Pricing does", change)).isFalse();
+	}
+
+	@Test
+	void neverRulesAreAttackedFirst() {
+		Rule example = new Rule("R2", "A member with a 10% coupon gets 15% off", "boundary", "", "", "", true, null);
+		Rule invariant = new Rule("R1", "The final price is never negative", "boundary", "", "", "", true, null);
+		assertThat(AttackLoop.invariantScore(invariant)).isGreaterThan(AttackLoop.invariantScore(example));
+	}
+
+	@Test
 	void compilerErrorsAreTheJavacLinesOnly() {
 		List<String> log = List.of("[INFO] Scanning", "[ERROR] /workspace/src/test/java/A.java:[5,9] cannot find symbol",
 				"[ERROR]   symbol:   method foo()", "[ERROR] Failed to execute goal ...", "symbol:   method foo()");
