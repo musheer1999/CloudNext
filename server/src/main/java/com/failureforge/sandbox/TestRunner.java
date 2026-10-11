@@ -12,7 +12,15 @@ import com.failureforge.run.TestCaseResult;
  */
 public interface TestRunner {
 
-	TestRunResult runTests(Path repoDir, Consumer<String> log);
+	/** Runs all tests. */
+	default TestRunResult runTests(Path repoDir, Consumer<String> log) {
+		return runTests(repoDir, log, null);
+	}
+
+	/**
+	 * @param testClass if not null, run only this test class (fully qualified), e.g. a generated attack
+	 */
+	TestRunResult runTests(Path repoDir, Consumer<String> log, String testClass);
 
 	/**
 	 * @param buildExitCode exit code of mvn/gradle (non-zero if any test failed, or the build broke)

@@ -33,6 +33,26 @@ management:
         include: health,info
 
 failureforge:
+  # The LLM (D-028): any OpenAI-compatible /v1/chat/completions server. Defaults = Ollama on this machine.
+  # Office laptop: put the office URL/model in application-local.yml (never in git; the repo is public).
+  llm:
+    base-url: ${FF_LLM_BASE_URL:http://localhost:11434/v1}
+    model: ${FF_LLM_MODEL:hf.co/Qwen/Qwen3-8B-GGUF:Q4_K_M}
+    api-key: ${FF_LLM_API_KEY:}
+    bypass-proxy: true
+    max-tokens: 2048
+    temperature: 0
+    timeout-seconds: 900
+    # Qwen3 on Ollama "thinks" out loud by default, which is slow; this switches it off. Empty for the office LLM.
+    prompt-suffix: ${FF_LLM_PROMPT_SUFFIX:" /no_think"}
+    extra-body: {}
+  agent:
+    # false = Phase 1 behaviour only (existing tests), no LLM calls.
+    enabled: ${FF_AGENT_ENABLED:true}
+    max-rules: 6
+    max-attacks: 3
+    max-repairs: 3
+    jqwik-version: 1.10.2
   # Folder where each run's checkout lives: <work-dir>/run-<id>
   work-dir: ${FF_WORK_DIR:./work}
   worker:

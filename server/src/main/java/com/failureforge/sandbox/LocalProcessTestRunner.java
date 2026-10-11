@@ -34,8 +34,13 @@ public class LocalProcessTestRunner implements TestRunner {
 	}
 
 	@Override
-	public TestRunResult runTests(Path repoDir, Consumer<String> out) {
-		List<String> command = BuildCommand.forRepo(repoDir, config.fallbackMavenWrapper());
+	public TestRunResult runTests(Path repoDir, Consumer<String> out, String testClass) {
+		List<String> command = new java.util.ArrayList<>(BuildCommand.forRepo(repoDir, config.fallbackMavenWrapper()));
+		if (testClass != null) {
+			command.addAll(BuildCommand.detect(repoDir) == BuildCommand.Tool.MAVEN
+					? List.of("-Dtest=" + testClass, "-Dsurefire.failIfNoSpecifiedTests=false")
+					: List.of("--tests", testClass));
+		}
 		out.accept("[sandbox: local, no isolation] $ " + String.join(" ", command));
 		// Use the same JDK that runs FailureForge, so the build doesn't depend on the machine's JAVA_HOME.
 		Map<String, String> env = Map.of("JAVA_HOME", System.getProperty("java.home"));

@@ -7,6 +7,8 @@ export interface Run {
   gerritUrl: string
   jiraUrl: string | null
   wikiUrls: string[]
+  ticketText: string | null
+  tokensUsed: number
   gerritProject: string | null
   gerritChange: number | null
   patchset: number | null
@@ -59,10 +61,31 @@ export interface Comparison {
   message: string | null
 }
 
+/** A rule the AI derived, with the attack on it if there was one (server: RunRepository.RuleView). */
+export interface RuleView {
+  key: string
+  text: string
+  type: string
+  sourceQuote: string | null
+  source: string | null
+  codeLocation: string | null
+  status: 'KEPT' | 'DROPPED'
+  dropReason: string | null
+  testClass: string | null
+  testCode: string | null
+  compileAttempts: number | null
+  parentStatus: TestStatus | null
+  patchStatus: TestStatus | null
+  verdict: Verdict | null
+  minimalInput: string | null
+  attackStatus: 'DONE' | 'COULDNT_COMPILE' | null
+}
+
 export interface RunDetail {
   run: Run
   tests: TestCase[]
   comparisons: Comparison[]
+  rules: RuleView[]
 }
 
 export interface LogEvent {
@@ -78,11 +101,16 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>
 }
 
-export async function submitRun(gerritUrl: string, jiraUrl: string, wikiUrls: string[]): Promise<number> {
+export async function submitRun(
+  gerritUrl: string,
+  jiraUrl: string,
+  wikiUrls: string[],
+  ticketText: string,
+): Promise<number> {
   const res = await fetch('/api/runs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ gerritUrl, jiraUrl, wikiUrls }),
+    body: JSON.stringify({ gerritUrl, jiraUrl, wikiUrls, ticketText }),
   })
   return (await json<{ id: number }>(res)).id
 }

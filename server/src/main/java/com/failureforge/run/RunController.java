@@ -38,14 +38,15 @@ public class RunController {
 		this.events = events;
 	}
 
-	public record SubmitRequest(@NotBlank String gerritUrl, String jiraUrl, List<String> wikiUrls) {
+	public record SubmitRequest(@NotBlank String gerritUrl, String jiraUrl, List<String> wikiUrls, String ticketText) {
 	}
 
 	public record SubmitResponse(long id) {
 	}
 
 	/** {@code tests} = results on the patch; {@code comparisons} = parent vs patch with a verdict each. */
-	public record RunDetail(Run run, List<TestCaseResult> tests, List<Comparison> comparisons) {
+	public record RunDetail(Run run, List<TestCaseResult> tests, List<Comparison> comparisons,
+			List<RunRepository.RuleView> rules) {
 	}
 
 	@PostMapping
@@ -61,7 +62,8 @@ public class RunController {
 		List<String> wikiUrls = request.wikiUrls() == null ? List.of()
 				: request.wikiUrls().stream().map(String::trim).filter(s -> !s.isEmpty()).toList();
 		String jiraUrl = request.jiraUrl() == null || request.jiraUrl().isBlank() ? null : request.jiraUrl().trim();
-		return new SubmitResponse(runs.enqueue(gerritUrl, jiraUrl, wikiUrls));
+		String ticket = request.ticketText() == null || request.ticketText().isBlank() ? null : request.ticketText().strip();
+		return new SubmitResponse(runs.enqueue(gerritUrl, jiraUrl, wikiUrls, ticket));
 	}
 
 	@GetMapping
@@ -72,7 +74,7 @@ public class RunController {
 	@GetMapping("/{id}")
 	public RunDetail get(@PathVariable long id) {
 		Run run = runs.find(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-		return new RunDetail(run, runs.findTests(id), runs.findComparisons(id));
+		return new RunDetail(run, runs.findTests(id), runs.findComparisons(id), runs.findRules(id));
 	}
 
 	@GetMapping(path = "/{id}/events", produces = "text/event-stream")

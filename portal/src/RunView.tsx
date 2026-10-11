@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { getRun, isFinished, watchRun, type Comparison, type LogEvent, type Run, type TestCase, type TestStatus } from './api'
+import { getRun, isFinished, watchRun, type Comparison, type LogEvent, type Run, type RuleView, type TestCase, type TestStatus } from './api'
+import { RulesSection } from './RulesSection'
 import { StatusBadge } from './StatusBadge'
 import { VERDICT_LABEL } from './verdicts'
 
@@ -7,6 +8,7 @@ export function RunView({ id, onChange }: { id: number; onChange: () => void }) 
   const [run, setRun] = useState<Run | null>(null)
   const [tests, setTests] = useState<TestCase[]>([])
   const [comparisons, setComparisons] = useState<Comparison[]>([])
+  const [rules, setRules] = useState<RuleView[]>([])
   const [log, setLog] = useState<LogEvent[]>([])
   const [error, setError] = useState<string | null>(null)
   const [followLog, setFollowLog] = useState(true)
@@ -20,6 +22,7 @@ export function RunView({ id, onChange }: { id: number; onChange: () => void }) 
           setRun(d.run)
           setTests(d.tests)
           setComparisons(d.comparisons)
+          setRules(d.rules)
         }
       })
       .catch((e: Error) => setError(e.message))
@@ -31,13 +34,16 @@ export function RunView({ id, onChange }: { id: number; onChange: () => void }) 
       (r) => {
         setRun(r)
         onChange()
-        if (isFinished(r))
-          getRun(id).then((d) => {
-            if (!cancelled) {
+        // Rules and attacks arrive while the run is still going; refresh them on every status change.
+        getRun(id).then((d) => {
+          if (!cancelled) {
+            setRules(d.rules)
+            if (isFinished(r)) {
               setTests(d.tests)
               setComparisons(d.comparisons)
             }
-          })
+          }
+        })
       },
     )
     return () => {
@@ -92,6 +98,20 @@ export function RunView({ id, onChange }: { id: number; onChange: () => void }) 
                 <dd>{run.wikiUrls.map((u) => <a key={u} href={u} target="_blank" rel="noreferrer" className="block">{u}</a>)}</dd>
               </>
             )}
+            {run.ticketText && (
+              <>
+                <dt>Ticket</dt>
+                <dd className="ticket-preview" title={run.ticketText}>
+                  {run.ticketText.split('\n').find((l) => l.trim()) ?? ''}
+                </dd>
+              </>
+            )}
+            {run.tokensUsed > 0 && (
+              <>
+                <dt>LLM tokens</dt>
+                <dd>{run.tokensUsed.toLocaleString()}</dd>
+              </>
+            )}
             <dt>Time</dt>
             <dd>{duration(run)}</dd>
           </dl>
@@ -99,6 +119,8 @@ export function RunView({ id, onChange }: { id: number; onChange: () => void }) 
       </header>
 
       {run.error && <p className="error banner">Pipeline error: {run.error}</p>}
+
+      {rules.length > 0 && <RulesSection rules={rules} />}
 
       {run.status === 'SUCCEEDED' && comparisons.length > 0 && <VerdictSection run={run} comparisons={comparisons} />}
 

@@ -43,7 +43,7 @@ export default function App() {
     <div className="layout">
       <aside className="sidebar">
         <h1 className="brand">FailureForge</h1>
-        <p className="tagline">Phase 1: run a Gerrit change's existing tests</p>
+        <p className="tagline">Tries to break a Gerrit change before production does</p>
         <SubmitForm
           onSubmitted={(id) => {
             refresh()

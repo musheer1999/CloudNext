@@ -15,7 +15,7 @@ class DockerTestRunnerTest {
 	private static DockerTestRunner runner(String dockerCommand) {
 		var docker = new FailureForgeProperties.Docker(dockerCommand, "maven:3.9-eclipse-temurin-21", "2", "4g", 2048);
 		var sandbox = new FailureForgeProperties.Sandbox(FailureForgeProperties.SandboxMode.DOCKER, 10, Path.of("mvnw"), docker);
-		return new DockerTestRunner(new ProcessRunner(), new FailureForgeProperties(Path.of("work"), null, null, sandbox));
+		return new DockerTestRunner(new ProcessRunner(), new FailureForgeProperties(Path.of("work"), null, null, sandbox, null, null));
 	}
 
 	@Test

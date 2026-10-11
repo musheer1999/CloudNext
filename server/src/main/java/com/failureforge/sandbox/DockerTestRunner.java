@@ -56,14 +56,16 @@ public class DockerTestRunner implements TestRunner {
 	}
 
 	@Override
-	public TestRunResult runTests(Path repoDir, Consumer<String> out) {
+	public TestRunResult runTests(Path repoDir, Consumer<String> out, String testClass) {
 		// e.g. work/run-7/patch -> failureforge-run-7-patch (unique per run and side)
 		String name = ("failureforge-" + repoDir.getParent().getFileName() + "-" + repoDir.getFileName())
 			.toLowerCase().replaceAll("[^a-z0-9_.-]", "-");
 		String volume = name + "-ws";
 		BuildCommand.Tool tool = BuildCommand.detect(repoDir);
-		BuildCommand.Steps steps = BuildCommand.forContainer(repoDir);
+		BuildCommand.Steps steps = BuildCommand.forContainer(repoDir, testClass);
 		Duration stepTimeout = Duration.ofMinutes(config.timeoutMinutes());
+		// A checkout is tested several times (existing tests, then each attack): never mix in old reports.
+		deleteRecursively(repoDir.resolve(REPORTS_DIR));
 		try {
 			out.accept("[sandbox: docker] 1/4 copying the checkout into volume " + volume);
 			mustRun(out, "volume", "create", volume);
@@ -159,6 +161,18 @@ public class DockerTestRunner implements TestRunner {
 		command.addAll(List.of(args));
 		out.accept("$ " + String.join(" ", command));
 		return processes.run(command, Path.of(".").toAbsolutePath(), Map.of(), timeout, out);
+	}
+
+	private static void deleteRecursively(Path dir) {
+		if (!java.nio.file.Files.exists(dir)) {
+			return;
+		}
+		try (var paths = java.nio.file.Files.walk(dir)) {
+			paths.sorted(java.util.Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+		}
+		catch (java.io.IOException e) {
+			throw new java.io.UncheckedIOException(e);
+		}
 	}
 
 	/** Docker inside WSL sees Windows drives under /mnt: {@code D:\a\b} -> {@code /mnt/d/a/b}. */

@@ -25,7 +25,7 @@ class GerritClientTest {
 			""";
 
 	private final GerritClient client = new GerritClient(JsonMapper.builder().build(),
-			new FailureForgeProperties(Path.of("work"), null, new FailureForgeProperties.Gerrit("", ""), null));
+			new FailureForgeProperties(Path.of("work"), null, new FailureForgeProperties.Gerrit("", ""), null, null, null));
 
 	@Test
 	void picksCurrentPatchsetByDefault() {

@@ -3,6 +3,7 @@ import { submitRun } from './api'
 
 export function SubmitForm({ onSubmitted }: { onSubmitted: (id: number) => void }) {
   const [gerritUrl, setGerritUrl] = useState('')
+  const [ticketText, setTicketText] = useState('')
   const [jiraUrl, setJiraUrl] = useState('')
   const [wikiUrls, setWikiUrls] = useState('')
   const [busy, setBusy] = useState(false)
@@ -13,8 +14,9 @@ export function SubmitForm({ onSubmitted }: { onSubmitted: (id: number) => void 
     setBusy(true)
     setError(null)
     try {
-      const id = await submitRun(gerritUrl.trim(), jiraUrl.trim(), wikiUrls.split('\n'))
+      const id = await submitRun(gerritUrl.trim(), jiraUrl.trim(), wikiUrls.split('\n'), ticketText)
       setGerritUrl('')
+      setTicketText('')
       setJiraUrl('')
       setWikiUrls('')
       onSubmitted(id)
@@ -38,6 +40,15 @@ export function SubmitForm({ onSubmitted }: { onSubmitted: (id: number) => void 
         />
       </label>
       <label>
+        Ticket text (what the change must do)
+        <textarea
+          rows={5}
+          placeholder="Paste the JIRA ticket: summary, description, acceptance criteria"
+          value={ticketText}
+          onChange={(e) => setTicketText(e.target.value)}
+        />
+      </label>
+      <label>
         JIRA ticket link
         <input
           type="url"
@@ -50,7 +61,7 @@ export function SubmitForm({ onSubmitted }: { onSubmitted: (id: number) => void 
         Wiki links (one per line)
         <textarea rows={2} value={wikiUrls} onChange={(e) => setWikiUrls(e.target.value)} />
       </label>
-      <p className="hint">JIRA and wiki links are saved now and used from Phase 2.</p>
+      <p className="hint">The AI reads the ticket text and the code change. JIRA/wiki links are saved for later.</p>
       {error && <p className="error">{error}</p>}
       <button type="submit" className="primary" disabled={busy}>
         {busy ? 'Submitting…' : 'Start run'}

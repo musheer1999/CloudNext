@@ -124,6 +124,23 @@ button.link { background: none; border: none; color: var(--accent); cursor: poin
 .test-message { color: var(--bad); font-family: ui-monospace, Consolas, monospace; font-size: 12px; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .section-heading { font-size: 15px; margin-bottom: 10px; }
+.ticket-preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 640px; }
+
+.finding-banner { background: var(--bad-bg); color: var(--bad); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 14px; }
+.rules { display: flex; flex-direction: column; gap: 10px; }
+.rule-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.rule-card-bad { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad) inset; }
+.rule-card-dropped { opacity: .65; }
+.rule-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rule-key { font-weight: 700; font-size: 13px; }
+.rule-text { font-size: 14px; font-weight: 600; }
+.rule-quote { margin: 0; padding: 4px 10px; border-left: 3px solid var(--border); color: var(--text); font-size: 13px; font-style: italic; }
+.counterexample { display: flex; flex-direction: column; gap: 2px; background: var(--bad-bg); border-radius: 6px; padding: 8px 10px; }
+.counterexample-label { font-size: 11px; font-weight: 700; color: var(--bad); text-transform: uppercase; letter-spacing: .03em; }
+.counterexample code { font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 13px; overflow-wrap: anywhere; }
+.attack-facts { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; font-size: 13px; }
+.attack-facts .link { padding: 0; }
+.code { background: var(--log-bg); color: var(--log-text); border-radius: 6px; padding: 10px 12px; margin: 0; font-size: 12px; overflow-x: auto; font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; }
 .status { font-size: 12px; font-weight: 600; white-space: nowrap; }
 .status-good { color: var(--good); }
 .status-bad { color: var(--bad); }

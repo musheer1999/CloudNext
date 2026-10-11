@@ -1,12 +1,18 @@
 package com.failureforge.worker;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
+import com.failureforge.agent.AttackLoop;
+import com.failureforge.agent.ChangeContext;
+import com.failureforge.agent.Rule;
+import com.failureforge.agent.RuleExtractor;
 import com.failureforge.config.FailureForgeProperties;
+import com.failureforge.process.ProcessRunner;
 import com.failureforge.gerrit.GerritChange;
 import com.failureforge.gerrit.GerritChangeUrl;
 import com.failureforge.gerrit.GerritClient;
@@ -38,15 +44,22 @@ public class RunPipeline {
 	private final GitCheckout git;
 	private final TestRunner testRunner;
 	private final FailureForgeProperties props;
+	private final ProcessRunner processes;
+	private final RuleExtractor rules;
+	private final AttackLoop attacks;
 
 	public RunPipeline(RunRepository runs, RunEvents events, GerritClient gerrit, GitCheckout git,
-			TestRunner testRunner, FailureForgeProperties props) {
+			TestRunner testRunner, FailureForgeProperties props, ProcessRunner processes, RuleExtractor rules,
+			AttackLoop attacks) {
 		this.runs = runs;
 		this.events = events;
 		this.gerrit = gerrit;
 		this.git = git;
 		this.testRunner = testRunner;
 		this.props = props;
+		this.processes = processes;
+		this.rules = rules;
+		this.attacks = attacks;
 	}
 
 	public void execute(Run run) {
@@ -106,12 +119,20 @@ public class RunPipeline {
 			}
 
 			// 4. Verdicts: plain code, no AI (D-005).
-			List<Comparison> comparisons = VerdictEngine.compare(parent == null ? List.of() : parent.tests(),
-					parentBuilt, patch.tests(), patchBuilt);
-			runs.complete(id, patch.tests(), comparisons, parent == null ? null : parent.buildExitCode(),
-					patch.buildExitCode());
+			List<Comparison> comparisons = new ArrayList<>(VerdictEngine.compare(
+					parent == null ? List.of() : parent.tests(), parentBuilt, patch.tests(), patchBuilt));
 			out.accept(summary(patch));
 			out.accept(verdictSummary(comparisons));
+
+			// 5. The agent (Phase 2): rules from the ticket + diff, then attacks with generated tests.
+			if (props.agent().enabled() && hasParent && patchBuilt) {
+				comparisons.addAll(agent(id, run, patchDir, parentDir, change.parentSha(), out));
+				comparisons.sort(Comparison.MOST_IMPORTANT_FIRST);
+			}
+
+			runs.complete(id, patch.tests(), comparisons, parent == null ? null : parent.buildExitCode(),
+					patch.buildExitCode());
+			out.accept("FINAL " + verdictSummary(comparisons));
 		}
 		catch (RuntimeException e) {
 			log.warn("Run {} failed", id, e);
@@ -125,6 +146,76 @@ public class RunPipeline {
 	private void step(long id, String step) {
 		runs.updateStep(id, step);
 		events.statusChanged(id);
+	}
+
+	/**
+	 * Rules + attacks. Never fails the run: if the LLM is down or confused, the run still reports
+	 * the existing-test results, and the log says what went wrong.
+	 *
+	 * @return the generated tests' comparisons, to show next to the existing ones
+	 */
+	private List<Comparison> agent(long id, Run run, Path patchDir, Path parentDir, String parentSha,
+			Consumer<String> out) {
+		List<Comparison> found = new ArrayList<>();
+		try {
+			step(id, "RULES");
+			out.accept("===== Agent: rules the change must guarantee =====");
+			ChangeContext context = ChangeContext.read(processes, patchDir, parentSha);
+			if (context.changedFiles().isEmpty()) {
+				out.accept("[agent] the change touches no main Java code: nothing to attack");
+				return found;
+			}
+			if (run.ticketText() == null) {
+				out.accept("[agent] no ticket text was given: rules can only come from the code diff");
+			}
+			RuleExtractor.Result extracted = rules.extract(run.ticketText(), context, props.agent().maxRules(), out);
+			runs.addTokens(id, extracted.tokens());
+			List<Long> ruleIds = runs.saveRules(id, extracted.rules());
+			for (Rule r : extracted.rules()) {
+				out.accept("[agent] " + r.key() + " [" + r.type() + "] " + (r.kept() ? "KEPT   " : "DROPPED") + " "
+						+ r.text() + " | quote: \"" + r.sourceQuote() + "\""
+						+ (r.kept() ? "" : " | reason: " + r.dropReason()));
+			}
+			events.statusChanged(id);
+
+			// Phase 2 attacks boundary rules; if the model typed none as boundary, try the kept ones anyway.
+			List<Integer> targets = new ArrayList<>();
+			for (int i = 0; i < extracted.rules().size(); i++) {
+				if (extracted.rules().get(i).kept() && extracted.rules().get(i).type().contains("boundary")) {
+					targets.add(i);
+				}
+			}
+			if (targets.isEmpty()) {
+				for (int i = 0; i < extracted.rules().size(); i++) {
+					if (extracted.rules().get(i).kept()) {
+						targets.add(i);
+					}
+				}
+			}
+			targets = targets.subList(0, Math.min(targets.size(), props.agent().maxAttacks()));
+
+			step(id, "ATTACKING");
+			for (int i : targets) {
+				Rule rule = extracted.rules().get(i);
+				out.accept("===== Agent: attacking " + rule.key() + " (Boundary specialist) =====");
+				try {
+					AttackLoop.Result result = attacks.attack(rule, context, patchDir, parentDir, out);
+					runs.addTokens(id, result.tokens());
+					runs.saveAttack(id, ruleIds.get(i), result);
+					found.addAll(result.comparisons());
+					events.statusChanged(id);
+				}
+				catch (RuntimeException e) {
+					log.warn("Attack on {} failed", rule.key(), e);
+					out.accept("[agent] attack on " + rule.key() + " failed: " + e.getMessage());
+				}
+			}
+		}
+		catch (RuntimeException e) {
+			log.warn("Agent failed for run {}", id, e);
+			out.accept("[agent] ERROR: " + e.getMessage() + " (the existing-test results above still count)");
+		}
+		return found;
 	}
 
 	/** A side "built" unless the build stopped before any test ran. */

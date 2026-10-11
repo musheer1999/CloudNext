@@ -61,19 +61,24 @@ public final class BuildCommand {
 	 * {@code prepare} downloads dependencies and compiles (network on, no tests),
 	 * {@code test} runs the tests offline (network off).
 	 */
-	public static Steps forContainer(Path repo) {
+	public static Steps forContainer(Path repo, String testClass) {
+		if (testClass != null && !testClass.matches("[\\w.$]+")) {
+			throw new IllegalArgumentException("bad test class name: " + testClass);
+		}
 		if (detect(repo) == Tool.MAVEN) {
 			// The repo's own wrapper pins its Maven version; otherwise the image's mvn.
 			String mvn = Files.exists(repo.resolve("mvnw")) ? "sh ./mvnw" : "mvn";
+			String only = testClass == null ? "" : " -Dtest=" + testClass + " -Dsurefire.failIfNoSpecifiedTests=false";
 			return new Steps(
 					// -Dtest=none with failIfNoSpecifiedTests=false resolves the test runner plugins
 					// without running any test, so the offline step finds everything it needs.
 					mvn + " -B -ntp test -Dtest=FailureForgeNoSuchTest -Dsurefire.failIfNoSpecifiedTests=false",
-					mvn + " -B -ntp -o test -Dmaven.test.failure.ignore=true");
+					mvn + " -B -ntp -o test -Dmaven.test.failure.ignore=true" + only);
 		}
+		String only = testClass == null ? "" : " --tests " + testClass;
 		return new Steps(
 				"sh ./gradlew testClasses --console=plain",
-				"sh ./gradlew test --offline --continue --console=plain");
+				"sh ./gradlew test --offline --continue --console=plain" + only);
 	}
 
 	public record Steps(String prepare, String test) {

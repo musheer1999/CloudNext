@@ -9,7 +9,30 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * Spring fills this record at startup, so code never reads raw strings from config.
  */
 @ConfigurationProperties(prefix = "failureforge")
-public record FailureForgeProperties(Path workDir, Worker worker, Gerrit gerrit, Sandbox sandbox) {
+public record FailureForgeProperties(Path workDir, Worker worker, Gerrit gerrit, Sandbox sandbox, Llm llm,
+		Agent agent) {
+
+	/**
+	 * Any OpenAI-compatible chat-completions server (D-028): Ollama for dev, the office LLM for the demo.
+	 *
+	 * @param baseUrl        up to and including {@code /v1}, e.g. {@code http://localhost:11434/v1}
+	 * @param apiKey         sent as a Bearer token if set; the office LLM needs none
+	 * @param bypassProxy    connect directly, ignoring any JVM proxy settings (office: like {@code curl --noproxy "*"})
+	 * @param promptSuffix   appended to every user message (e.g. {@code /no_think} for Qwen3 models on Ollama)
+	 * @param extraBody      extra JSON fields sent as-is, e.g. {@code chat_template_kwargs} for the office model
+	 */
+	public record Llm(String baseUrl, String model, String apiKey, boolean bypassProxy, int maxTokens,
+			double temperature, int timeoutSeconds, String promptSuffix, java.util.Map<String, Object> extraBody) {
+	}
+
+	/**
+	 * @param maxRules        rules kept per run (the rest are ignored)
+	 * @param maxAttacks      rules attacked per run
+	 * @param maxRepairs      compile-repair attempts per generated test (D-010)
+	 * @param jqwikVersion    jqwik added to the repo's test dependencies when it has none
+	 */
+	public record Agent(boolean enabled, int maxRules, int maxAttacks, int maxRepairs, String jqwikVersion) {
+	}
 
 	public record Worker(long pollIntervalMs) {
 	}

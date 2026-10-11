@@ -9,6 +9,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
+import com.failureforge.agent.AttackLoop;
+import com.failureforge.agent.Rule;
 import com.failureforge.verdict.Comparison;
 import com.failureforge.verdict.Verdict;
 import org.springframework.jdbc.core.RowMapper;
@@ -29,15 +31,16 @@ public class RunRepository {
 	}
 
 	/** Puts a new run in the queue and returns its id. */
-	public long enqueue(String gerritUrl, String jiraUrl, List<String> wikiUrls) {
+	public long enqueue(String gerritUrl, String jiraUrl, List<String> wikiUrls, String ticketText) {
 		return jdbc.sql("""
-				INSERT INTO run (gerrit_url, jira_url, wiki_urls)
-				VALUES (:gerritUrl, :jiraUrl, :wikiUrls)
+				INSERT INTO run (gerrit_url, jira_url, wiki_urls, ticket_text)
+				VALUES (:gerritUrl, :jiraUrl, :wikiUrls, :ticketText)
 				RETURNING id
 				""")
 			.param("gerritUrl", gerritUrl)
 			.param("jiraUrl", jiraUrl)
 			.param("wikiUrls", wikiUrls.toArray(String[]::new))
+			.param("ticketText", ticketText)
 			.query(Long.class)
 			.single();
 	}
@@ -196,6 +199,74 @@ public class RunRepository {
 			.list();
 	}
 
+	public void addTokens(long runId, int tokens) {
+		jdbc.sql("UPDATE run SET tokens_used = tokens_used + :t WHERE id = :id").param("t", tokens).param("id", runId).update();
+	}
+
+	/** Saves the rules and returns their database ids, in the same order. */
+	public List<Long> saveRules(long runId, List<Rule> rules) {
+		return rules.stream().map(r -> jdbc.sql("""
+				INSERT INTO rule (run_id, rule_key, text, type, source_quote, source, code_location, status, drop_reason)
+				VALUES (:runId, :key, :text, :type, :quote, :source, :location, :status, :reason)
+				RETURNING id
+				""")
+			.param("runId", runId)
+			.param("key", r.key())
+			.param("text", r.text())
+			.param("type", r.type())
+			.param("quote", r.sourceQuote())
+			.param("source", r.source())
+			.param("location", r.codeLocation())
+			.param("status", r.kept() ? "KEPT" : "DROPPED")
+			.param("reason", r.dropReason())
+			.query(Long.class)
+			.single()).toList();
+	}
+
+	public void saveAttack(long runId, long ruleId, AttackLoop.Result a) {
+		jdbc.sql("""
+				INSERT INTO attack (run_id, rule_id, specialist, test_class, test_code, compile_attempts,
+				                    parent_status, patch_status, verdict, minimal_input, status)
+				VALUES (:runId, :ruleId, 'BOUNDARY', :testClass, :code, :attempts,
+				        :parentStatus, :patchStatus, :verdict, :minimal, :status)
+				""")
+			.param("runId", runId)
+			.param("ruleId", ruleId)
+			.param("testClass", a.testClass())
+			.param("code", a.code())
+			.param("attempts", a.compileAttempts())
+			.param("parentStatus", a.parentStatus() == null ? null : a.parentStatus().name())
+			.param("patchStatus", a.patchStatus() == null ? null : a.patchStatus().name())
+			.param("verdict", a.verdict().name())
+			.param("minimal", a.minimalInput())
+			.param("status", a.status().name())
+			.update();
+	}
+
+	/** A rule plus the attack on it (if it was attacked), for the portal. */
+	public record RuleView(String key, String text, String type, String sourceQuote, String source,
+			String codeLocation, String status, String dropReason, String testClass, String testCode,
+			Integer compileAttempts, String parentStatus, String patchStatus, String verdict, String minimalInput,
+			String attackStatus) {
+	}
+
+	public List<RuleView> findRules(long runId) {
+		return jdbc.sql("""
+				SELECT r.*, a.test_class, a.test_code, a.compile_attempts, a.parent_status, a.patch_status,
+				       a.verdict, a.minimal_input, a.status AS attack_status
+				FROM rule r LEFT JOIN attack a ON a.rule_id = r.id
+				WHERE r.run_id = :runId ORDER BY r.id
+				""")
+			.param("runId", runId)
+			.query((rs, n) -> new RuleView(rs.getString("rule_key"), rs.getString("text"), rs.getString("type"),
+					rs.getString("source_quote"), rs.getString("source"), rs.getString("code_location"),
+					rs.getString("status"), rs.getString("drop_reason"), rs.getString("test_class"),
+					rs.getString("test_code"), nullableInt(rs, "compile_attempts"), rs.getString("parent_status"),
+					rs.getString("patch_status"), rs.getString("verdict"), rs.getString("minimal_input"),
+					rs.getString("attack_status")))
+			.list();
+	}
+
 	public List<Comparison> findComparisons(long runId) {
 		return jdbc.sql("SELECT * FROM test_comparison WHERE run_id = :runId")
 			.param("runId", runId)
@@ -228,6 +299,8 @@ public class RunRepository {
 			rs.getString("gerrit_url"),
 			rs.getString("jira_url"),
 			stringList(rs.getArray("wiki_urls")),
+			rs.getString("ticket_text"),
+			rs.getInt("tokens_used"),
 			rs.getString("gerrit_project"),
 			nullableInt(rs, "gerrit_change"),
 			nullableInt(rs, "patchset"),

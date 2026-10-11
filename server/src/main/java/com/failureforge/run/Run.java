@@ -9,6 +9,8 @@ public record Run(
 		String gerritUrl,
 		String jiraUrl,
 		List<String> wikiUrls,
+		String ticketText,
+		int tokensUsed,
 		String gerritProject,
 		Integer gerritChange,
 		Integer patchset,
