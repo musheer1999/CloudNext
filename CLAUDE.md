@@ -24,7 +24,7 @@ FailureForge is an AI agent for a Samsung internal agent contest. It takes a Ger
 | Idea + design | Done (design doc shared with team) |
 | Phase 1 — pipeline skeleton | **Done 2026-10-11.** Portal → API → Postgres queue → worker → Gerrit REST → git checkout → **Docker sandbox** (D-026) → JUnit results + live log in portal. Verified on GerritHub change 1236098, run #6: 88/88 tests pass in 72 s, test step with `--network none`, no containers left behind. Known gaps: Gradle path in Docker not yet tested on a real repo; no automated test of the timeout path. |
 | Phase 2 — rules + Boundary specialist | Not started. Next. |
-| Code repository | Local git repo at `D:\CloudNext` (`server/`, `portal/`, `docs/`); not committed or pushed yet |
+| Code repository | Local git repo at `D:\CloudNext`, branch `main` (`server/`, `portal/`, `docs/`). First commit fd1c691 on 2026-10-11 (Phase 1). No remote yet (not pushed). |
 | LLM in use | Claude API (see D-004); no LLM calls yet (Phase 1 has no AI) |
 | Dev machine (personal laptop) | JDK 23, Node 24.21, PostgreSQL 16 (Windows service; may need a manual start), git, WSL2 Ubuntu + Docker Engine 29.1 (called as `wsl -d Ubuntu -e docker`). Port 8080 taken by Apache httpd. |
 
