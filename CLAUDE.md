@@ -4,7 +4,7 @@
 > It is the single source of truth for what we are building, what is decided, and where we are.
 > Update it every time a decision is made or a phase moves.
 
-Last updated: 2026-10-11 (Phase 2 done: D-030, D-031; demo ready)
+Last updated: 2026-10-12 (all 5 phases built as a POC: 4 specialists, feedback loop, Gerrit review, benchmark 4/4 caught, 0 false positives; D-032..D-039)
 Owner: Musheer Ahmad (Samsung R&D Institute, Noida)
 
 Full design doc: docs/DEVELOPMENT_GUIDE.md (read the relevant section before building each phase).
@@ -24,27 +24,38 @@ FailureForge is an AI agent for a Samsung internal agent contest. It takes a Ger
 | Idea + design | Done (design doc shared with team) |
 | Phase 1 — pipeline skeleton | **Done 2026-10-11.** Portal → API → Postgres queue → worker → Gerrit REST → git checkout → **Docker sandbox** (D-026) → JUnit results + live log in portal. Verified on GerritHub change 1236098, run #6: 88/88 tests pass in 72 s, test step with `--network none`, no containers left behind. Known gaps: Gradle path in Docker not yet tested on a real repo; no automated test of the timeout path. |
 | Phase 2 — rules + Boundary specialist | **Done 2026-10-11 (D-031).** Ticket text + diff → quoted rules (local Qwen3-8B via Ollama) → Boundary specialist writes jqwik test → compile-repair → parent vs patch → verdict. Finds the planted SHOP-42 bug with a shrunk counterexample in ~4–7 min. Demo script: `docs/DEMO.md`. Not done yet: JIRA/Confluence fetching (office), flaky reruns (Phase 3), Gerrit comments (Phase 4). |
-| Phase 3 — State + Concurrency specialists | Not started. |
-| Code repository | Local git repo at `D:\CloudNext`, branch `main` (`server/`, `portal/`, `docs/`). First commit fd1c691 on 2026-10-11 (Phase 1). Pushed to GitHub (public): https://github.com/musheer1999/CloudNext |
-| LLM in use | None yet. Dev: Ollama on the laptop (free); demo: office MuseGlimmer 30B (D-028). Claude API not used. |
+| Phase 3 — State + Concurrency specialists | **Done 2026-10-12 (D-037).** State: jqwik operation sequences, shrunk (SHOP-43 → `[PAY, CANCEL, REFUND, REFUND]`). Concurrency: latch-started threads ×200 (SHOP-44 → `threads=6, stock=2 -> reservations=3`). Flaky: generated tests re-run up to 5× via surefire; flaky → FLAKY verdict. Lincheck/jcstress not used (plain threads were enough). |
+| Phase 4 — Compat + Gerrit comments + dispute loop | **Done 2026-10-12 (D-032, D-034, D-035).** Compat = japicmp (SHOP-45 → removed `finalPrice`). Accept / Dispute (re-run with the constraint) / False Positive (per-repo memory). Gerrit review: preview works; **posting not yet tried** (needs GerritHub HTTP credentials in `application-local.yml`). buf (gRPC) not wired. |
+| Phase 5 — Benchmark, polish, pitch | **POC done 2026-10-12 (D-036, D-038).** Benchmark page: 5 sample changes → **4/4 planted bugs caught, 0 false positives**, avg 12m28s/run (one 35-min outlier from memory pressure, D-039), 25.6k tokens. Portal redesigned. Demo video script: `docs/DEMO.md`. **Still to do:** the real benchmark on 15–20 reverted past Samsung bug fixes (office). |
+| JIRA / Confluence | **Done (D-033)**, tested anonymously on Apache's public JIRA/Confluence; office auth via `failureforge.atlassian.token`. |
+| Code repository | GitHub (public): https://github.com/musheer1999/CloudNext, branch `main`. Download: https://github.com/musheer1999/CloudNext/archive/refs/heads/main.zip. Demo sample repo: https://github.com/musheer1999/failureforge-sample (changes on review.gerrithub.io). |
+| LLM in use | Dev: local Ollama `failureforge-qwen3` (Qwen3-8B, 8k context, D-039). Demo/office: MuseGlimmer 30B (D-028), config only. Claude API not used. |
+| Demo data | `docs/demo/failureforge-demo.sql`: database dump with the finished demo runs #16–#23 and the benchmark, so the office portal can show them without re-running (see section 7). |
 | Dev machine (personal laptop) | JDK 23, Node 24.21, PostgreSQL 16 (Windows service; may need a manual start), git, WSL2 Ubuntu + Docker Engine 29.1 (called as `wsl -d Ubuntu -e docker`). Port 8080 taken by Apache httpd. |
 
 ## 3. Architecture (summary)
 
 ```
-Portal (React) ──► Spring Boot API ──► PostgreSQL
-                        │ queued run
-                        ▼
-Orchestrator worker (Spring AI + LLM behind LlmClient interface)
-  Ingest (Gerrit diff, JIRA, wiki, existing tests)
-   → Rule extraction (JSON, each rule cites its source)
-   → Specialists: Boundary | State | Concurrency | Compat
-   → Test writer (compile, repair up to 3 times)
-   → Docker sandbox (run on parent commit AND on patch)
-   → Verdict engine (plain code, no AI)
-   → Gerrit comment + portal report
-  Dispute → back to rule extraction with developer's constraint
+Portal (React, :5173) ──► Spring Boot API (:8090, REST + SSE) ──► PostgreSQL (runs = job queue)
+                                │ worker claims the oldest QUEUED run (SKIP LOCKED)
+                                ▼
+RunPipeline (server/src/main/java/com/failureforge/worker/RunPipeline.java)
+  1. Gerrit REST: change → patchset ref, patch + parent SHA          (gerrit/GerritClient)
+  2. git fetch --depth 2, patch dir + parent worktree                (git/GitCheckout)
+  3. Existing tests on patch and parent in the Docker sandbox        (sandbox/DockerTestRunner)
+  4. Compat: japicmp on compiled parent vs patch classes, no LLM      (agent/CompatCheck)
+  5. Ingest: ticket text + JIRA issue + Confluence pages             (ticket/TicketSource)
+  6. Rules: LLM → JSON, each quote checked, false positives dropped   (agent/RuleExtractor)
+  7. Attacks: per rule type → Boundary | State | Concurrency          (agent/AttackLoop, TestWriter, Specialist)
+     LLM writes a jqwik test → compile on patch, repair ≤3 → run on parent → reruns ×5 for flakiness
+  8. Verdict engine: plain code, parent vs patch per check            (verdict/VerdictEngine)
+  9. Report: portal; Gerrit review on request; Accept/Dispute/FP       (gerrit/GerritReview, run/RunController)
+  Dispute → new run with the developer's constraint as a fact (run.constraints)
+LLM: one LlmClient, OpenAI-compatible /v1/chat/completions (Ollama dev, office MuseGlimmer)
 ```
+
+Sandbox per check: copy checkout into a Docker volume → "prepare" container (network on: deps + compile) →
+"test" container (`--network none`, 2 CPU, 4 GB, 2048 pids, 10 min) → copy only the JUnit reports back.
 
 Verdict table (verdict engine, no AI):
 
@@ -52,7 +63,10 @@ Verdict table (verdict engine, no AI):
 | --- | --- | --- |
 | Pass | Fail | Counterexample found |
 | Fail | Fail | Pre-existing bug or wrong test (low confidence) |
-| Pass | Pass | Nothing found |
+| Pass | Pass | Nothing found (rule holds) |
+| Fail | Pass | Fixed by the change |
+| Different on re-runs | | Flaky (never a finding) |
+| — (only in patch) | any | New test |
 | No compile | No compile | Couldn't check |
 
 ## 4. Tech stack
@@ -61,15 +75,15 @@ Verdict table (verdict engine, no AI):
 | --- | --- |
 | Portal | React 19 + TypeScript, Vite 8 (D-024) |
 | API | Spring Boot 4.1, Java 21, Maven wrapper, SSE for live progress (D-014, D-015, D-016) |
-| LLM framework | Spring AI 2.0 (D-014) |
+| LLM client | Own small OpenAI-compatible client (`llm/LlmClient`), not Spring AI (D-030) |
 | LLM (dev) | Ollama on the laptop, OpenAI-compatible API (D-028) |
 | LLM (demo) | Office MuseGlimmer 30B, OpenAI-compatible, swapped via config only (D-028) |
 | DB + queue | PostgreSQL 16, plain SQL via JdbcClient, Flyway migrations, `SKIP LOCKED` queue (D-019) |
-| Code parsing | JavaParser |
-| Sandbox | Docker Engine on Linux (WSL2 for dev), `docker` CLI commands; no network, CPU/mem limits, timeout, shared build cache (D-025) |
-| Test libraries | JUnit 5, jqwik (boundary + stateful), Lincheck, jcstress |
-| Compat checks | japicmp (Java API), buf breaking (gRPC protos) |
-| Integrations | Gerrit, JIRA, Confluence REST APIs |
+| Code context | `git diff` + full changed main Java files, size-capped (JavaParser not needed so far) |
+| Sandbox | Docker Engine on Linux (WSL2 for dev), `docker` CLI commands; no network, CPU/mem limits, timeout, shared build cache (D-025, D-026) |
+| Test libraries | JUnit 5 + jqwik 1.10.2 (added to FailureForge's copy of the pom); Lincheck/jcstress not used |
+| Compat checks | japicmp 0.26.3 (Java API); buf (gRPC) not wired |
+| Integrations | Gerrit (REST + git), JIRA + Confluence (REST) |
 
 ## 5. Decision log
 
@@ -249,23 +263,117 @@ Status: **Decided** = team/owner confirmed · **Proposed** = in design doc, not 
 - Fixes found by running it: small models forget `@ForAll` (now added by code), re-implement the logic instead of calling it (now rejected → repair), and use `Long.MAX_VALUE` ranges that overflow on the parent too (prompt asks for realistic ranges); "always/never" rules are attacked first.
 - Demo: `docs/DEMO.md` (script, setup, fallback = show run #12). `FF_MAX_ATTACKS=1` for a ~4 min live run.
 
+### D-032 — Compat specialist = japicmp, no LLM
+- Date: 2026-10-12 · Status: Proposed
+- Decision: Every full sandbox run also copies the compiled main classes back (`.ff-reports/ff-classes`, Maven `target/classes` or Gradle `build/classes/java/main`, root module). After the existing tests, a container runs japicmp 0.26.3 (`--only-incompatible -a public`) on parent vs patch; each `!`-marked line (removed/changed public method, field, class) is a break. Stored as rule C1 + an attack with specialist COMPAT; any break = COUNTEREXAMPLE. LLM rules typed "compat" are not attacked separately.
+- Why: API compatibility is decidable by a proven tool; no reason to ask an LLM. Verified: SHOP-45 → `REMOVED METHOD ... long finalPrice(long, int, boolean)`.
+- Limit: root module only; buf (gRPC) not wired.
+
+### D-033 — Ingest: JIRA + Confluence via REST, pasted text still first
+- Date: 2026-10-12 · Status: Proposed
+- Decision: `TicketSource` joins the pasted ticket text, the JIRA issue (`/rest/api/2/issue/KEY?fields=summary,description`, wiki markup → text) and each Confluence page (`/rest/api/content/{id}` or `?spaceKey&title`, storage HTML → text), each capped at 6k chars, and saves the result as `run.ticket_text` so the portal shows exactly what the AI read. Auth optional: `failureforge.atlassian.token` (Data Center PAT → Bearer) or username + token (Cloud → Basic). A source that fails is logged and skipped. Portal "Fetch" button uses `GET /api/ingest?url=`. Verified anonymously on issues.apache.org/jira (MNG-7000) and cwiki.apache.org.
+
+### D-034 — Feedback loop: Accept / Dispute / False Positive
+- Date: 2026-10-12 · Status: Proposed
+- Decision: `feedback` table (run, rule, repo = Gerrit project, type, text). **Dispute** requires a constraint and queues a re-run (`run.disputed_run_id`, `run.constraints` = earlier constraints + the new one); constraints go into the rule-extraction and test-writer prompts as facts. **False Positive** is remembered per repo: on later runs the rule texts are listed in the prompt and any new rule with ≥80% of the same words is DROPPED by code. **Accept** is recorded (for metrics). Verified on run #17: dispute → re-run #23 queued; empty dispute refused (400).
+
+### D-035 — Gerrit review on request, not automatic
+- Date: 2026-10-12 · Status: Proposed
+- Decision: "Post to Gerrit" (portal) → `POST /a/changes/{project~n}/revisions/{sha}/review` with a summary (every counterexample: rule, quote, shrunk input, test class, report link) and one unresolved inline comment on the first added line of the changed Java file; tag `autogenerated:failureforge`. Preview via `GET /api/runs/{id}/gerrit-review`. Needs Gerrit HTTP credentials.
+- Why: a person decides what gets posted on a colleague's change; avoids noise while the tool is new.
+
+### D-036 — Benchmark: one planted bug per specialist + one correct change
+- Date: 2026-10-12 · Status: Decided (verified)
+- Decision: `server/src/main/resources/benchmark.json` lists the cases; `POST /api/benchmark` queues one run per case (`run.benchmark_batch/case/expected`); the Benchmark page shows caught/bugs, false positives (counterexamples from an unexpected specialist, or any on the correct change), average time and tokens. Sample repo base `3dc3456` (Pricing, Order, Inventory); changes 1254028 (Boundary), 1254070 (State), 1254071 (Concurrency), 1254072 (Compat), 1254073 (no bug).
+- Next: the real benchmark of the design doc (15–20 reverted past bug fixes) on the office laptop.
+
+### D-037 — State + Concurrency specialists, flaky reruns
+- Date: 2026-10-12 · Status: Proposed
+- Decision: one `TestWriter` with a per-specialist role, technique and example (`Specialist` enum). State: an `enum Op` inside the test and `@ForAll @Size(min=1,max=12) List<Op> ops` (jqwik generates and shrinks the sequence); rejected ops (IllegalState/IllegalArgument) are allowed; rule checked after every op. Concurrency: one `@Example` repeating 200 experiments, 2–8 threads behind a `CountDownLatch` start gate, 10 s timeout, rule checked after each. Rule types are routed by `Specialist.forRuleType`; `pickTargets` attacks one rule per specialist first, then always/never rules. Generated tests run with `-Dsurefire.rerunFailingTestsCount=4` (5 runs, D-010): surefire's `flakyFailure` → status FLAKY → verdict FLAKY (never a finding).
+- Verified: SHOP-43 → `ops=[PAY, CANCEL, REFUND, REFUND] -> refunded 2000 > 1000`; SHOP-44 → `threads=6, stock=2 -> reservations=3` (consistent over 5 reruns).
+
+### D-038 — Portal redesign
+- Date: 2026-10-12 · Status: Proposed
+- Decision: top bar (Runs / Benchmark), pipeline progress steps, findings first (red cards with specialist, rule, quote, shrunk input, test, Accept/Dispute/False positive), other rules grouped (holds / not trusted / not attacked / dropped), Gerrit panel, "every check before vs after" table, log folds away when finished. Specialist identity = validated categorical colors (dataviz palette slots 1–4, light + dark checked with the validator) shown as a dot next to the name, never color alone.
+
+### D-039 — Dev model with an 8k context window; laptop memory
+- Date: 2026-10-12 · Status: Proposed
+- Finding: Ollama ran Qwen3-8B with its default 40,960-token context (11 GB, only 6/37 layers on the 4 GB GPU). With WSL holding ~5.6 GB, Windows memory commit hit 32.2/32.6 GB and one LLM call took 31 minutes (benchmark SHOP-45).
+- Decision: dev model `failureforge-qwen3` = Qwen3-8B with `num_ctx 8192` (`docs/ollama/Modelfile`; create with `ollama create failureforge-qwen3 -f docs/ollama/Modelfile`); it is the default `failureforge.llm.model`. Prompts stay under ~6k tokens (diff and files are capped). Size drops to 6.4 GB.
+- Still open on the personal laptop: cap WSL memory with `%UserProfile%\.wslconfig` (`[wsl2]` `memory=4GB`; `[experimental]` `autoMemoryReclaim=gradual`, then `wsl --shutdown`); not applied yet. Not relevant at the office (the LLM runs on the office GPU server).
+
+### D-040 — Everything in the public repo, including the demo config
+- Date: 2026-10-12 · Status: Decided (owner)
+- Decision: owner asked to publish everything so the project can be downloaded as a zip on the office laptop: `server/application-local.yml` (local Postgres password, WSL docker command) is committed, plus the demo database dump `docs/demo/failureforge-demo.sql`.
+- Still kept out on purpose: the office LLM's internal URL (Samsung internal network address; take it from the team chat) and any Gerrit/JIRA token (a public token lets anyone act as the owner).
+
 ## 6. Open questions
 
 - [ ] Contest deadline and demo format?
 - [ ] Can real Samsung code be sent to the Claude API, or only sample/open-source repos until the office LLM is used?
 - [x] Which office LLM API: MuseGlimmer 30B, OpenAI-compatible, no key (D-028). Still unknown: tool calling / JSON mode support; test with curl on the office laptop.
-- [ ] Which repositories for the benchmark?
+- [ ] Which repositories for the real benchmark (15–20 past Samsung bug fixes)? (POC benchmark on the sample repo: done, D-036)
 - [ ] Owners per area (Platform, Agent, Integrations + UI, Quality)?
 - [ ] Confirm MVP scope D-011.
-- [ ] Office laptop: does the internal Maven mirror carry Spring Boot 4.1 / Spring AI 2.0? Which npm registry? Which JDK and Node versions are installed?
+- [ ] Office laptop: does the internal Maven mirror carry Spring Boot 4.1, jqwik 1.10.2, japicmp 0.26.3? Which npm registry? Which JDK and Node versions are installed?
+- [ ] Does MuseGlimmer follow "answer with only JSON / one java block" reliably? (test on the office laptop)
 - [x] Container engine: Docker Engine on Linux, WSL2 on the personal laptop (D-025). Installed and working 2026-10-11.
 - [x] Upgrade home Node and move the portal to current Vite (done 2026-10-11, D-024)
 
-## 7. How to continue in another Claude session
+## 7. How to continue (office laptop or a new Claude session)
 
-1. Give Claude this file first and say: "This is my project context. Read it before helping. Add a new D-xxx entry for every decision we make and update Current status."
-2. In Claude Code, you can copy this file into the repo root as `CLAUDE.md`; Claude Code reads that automatically at the start of each session.
-3. After each session, download the updated file and keep it in the repo (commit it), so the repo always carries its own history.
+The owner is new to this stack: explain each step in simple words, build and run as you go, add a D-xxx entry
+for every decision and keep section 2 current. Office Claude tokens are limited: prefer small, targeted steps.
+
+### 7.1 Get it running on the office laptop (follow `docs/OFFICE_SETUP.md` for details)
+
+1. Download https://github.com/musheer1999/CloudNext/archive/refs/heads/main.zip (or `git clone`) and unzip.
+2. Install/check: JDK 21+, Node 22.12+, git, PostgreSQL 16, and Docker Engine on Linux (office: Linux machine,
+   or WSL2 + `docker.io`; Docker Desktop / Rancher Desktop are not allowed, D-025).
+3. Create the database: `psql -U postgres -c "CREATE DATABASE failureforge"`.
+4. Edit `server/application-local.yml` (committed with the home laptop's values, D-040):
+   - `spring.datasource.password` → the office Postgres password.
+   - `failureforge.sandbox.docker.command` → remove it on a Linux machine (plain `docker`); keep
+     `wsl -d Ubuntu -e docker` only on Windows + WSL2.
+   - Add the office LLM (URL from the team chat, model `openai/muse-glimmer-30b`, `bypass-proxy: true`,
+     `prompt-suffix: ""`, `extra-body.chat_template_kwargs.reasoning_strength: low`); exact block in
+     `docs/OFFICE_SETUP.md`. First check the endpoint with the team's curl (`--noproxy "*"`).
+   - Maven mirror if Maven Central is blocked (`~/.m2/settings.xml`); the sandbox containers need it too
+     (not wired yet: mount settings.xml in `DockerTestRunner.container`).
+5. Optional, to show the finished demo results: `psql -U postgres -d failureforge -f docs/demo/failureforge-demo.sql`
+   on an **empty** database, **before** the first server start (it contains the schema + Flyway history).
+6. Start: `cd server` → `.\mvnw.cmd spring-boot:run` (Linux: `./mvnw spring-boot:run`); `cd portal` →
+   `npm install` → `npm run dev`; open http://localhost:5173.
+7. Smoke test: Benchmark page shows 4/4 (if the dump was loaded); then start one run, e.g. SHOP-43
+   (Gerrit link + ticket text from `server/src/main/resources/benchmark.json`).
+
+### 7.2 What to do next (in priority order)
+
+1. Office LLM: verify the response shape against `LlmClient.chat`; tune if MuseGlimmer formats JSON/code
+   differently. It is much stronger than the laptop model, so expect fewer repairs.
+2. Post a Gerrit review once on a test change (D-035): needs Gerrit HTTP credentials in `application-local.yml`.
+3. Samsung JIRA/Confluence auth (D-033): personal access token; test with the portal's Fetch button.
+4. Real benchmark (design doc): 15–20 reverted past Samsung bug fixes covering all four specialists; add them to
+   `benchmark.json` (or a second file) and report caught / false positives / time / tokens.
+5. Gaps: Maven settings.xml mirror inside the sandbox; multi-module Maven (Compat reads the root module only);
+   Gradle repos (code path exists, never tested on a real repo); buf for gRPC protos; timeout path untested.
+
+### 7.3 Where things are
+
+| Path | What |
+| --- | --- |
+| `server/src/main/java/com/failureforge/worker/RunPipeline.java` | The whole pipeline, start here |
+| `server/src/main/java/com/failureforge/agent/` | Rules, specialists (`Specialist`, `TestWriter`), attack loop, compat, jqwik support |
+| `server/src/main/java/com/failureforge/sandbox/DockerTestRunner.java` | Docker sandbox (volumes, prepare/test, japicmp) |
+| `server/src/main/java/com/failureforge/llm/LlmClient.java` | The only LLM call site |
+| `server/src/main/resources/application.yml` | All settings (env-var overridable) |
+| `server/src/main/resources/db/migration/` | Database schema (Flyway V1–V5) |
+| `server/src/main/resources/benchmark.json` | Benchmark cases with ticket texts |
+| `portal/src/` | React portal (`RunView`, `RulesSection`, `BenchmarkView`) |
+| `docs/DEMO.md` | Video / live demo script |
+| `docs/OFFICE_SETUP.md` | Office laptop setup |
+| `docs/demo/` | Demo ticket SHOP-42 and the database dump |
+| github.com/musheer1999/failureforge-sample | Demo project; changes 1254028 / 1254070–73 on review.gerrithub.io |
 
 ## 8. Conventions for updating this file
 

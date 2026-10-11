@@ -1,0 +1,6 @@
+# FailureForge's dev model: Qwen3-8B with an 8k context window (D-039).
+# Ollama's default for this model is 40k, which needs ~11 GB and pushed a 16 GB laptop into swapping.
+# FailureForge prompts stay under ~6k tokens (diff and source files are capped), so 8k is enough.
+#   ollama create failureforge-qwen3 -f docs/ollama/Modelfile
+FROM hf.co/Qwen/Qwen3-8B-GGUF:Q4_K_M
+PARAMETER num_ctx 8192

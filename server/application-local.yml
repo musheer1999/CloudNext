@@ -1,0 +1,10 @@
+# LOCAL SECRETS - git-ignored, never commit. Loaded by spring.config.import in application.yml.
+spring:
+  datasource:
+    password: "Musheer@2000"
+
+# This PC: Docker Engine runs inside WSL2 Ubuntu (D-025). On a Linux machine leave this out.
+failureforge:
+  sandbox:
+    docker:
+      command: "wsl -d Ubuntu -e docker"

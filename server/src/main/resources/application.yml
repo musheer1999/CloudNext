@@ -37,7 +37,10 @@ failureforge:
   # Office laptop: put the office URL/model in application-local.yml (never in git; the repo is public).
   llm:
     base-url: ${FF_LLM_BASE_URL:http://localhost:11434/v1}
-    model: ${FF_LLM_MODEL:hf.co/Qwen/Qwen3-8B-GGUF:Q4_K_M}
+    # Dev default: Qwen3-8B with an 8k context (docs/ollama/Modelfile, D-039). Create it once with:
+    #   ollama pull hf.co/Qwen/Qwen3-8B-GGUF:Q4_K_M
+    #   ollama create failureforge-qwen3 -f docs/ollama/Modelfile
+    model: ${FF_LLM_MODEL:failureforge-qwen3}
     api-key: ${FF_LLM_API_KEY:}
     bypass-proxy: true
     max-tokens: 2048

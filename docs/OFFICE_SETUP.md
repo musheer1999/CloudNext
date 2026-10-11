@@ -44,7 +44,16 @@ failureforge:
   gerrit:                       # for the Samsung Gerrit (HTTP password from Gerrit Settings > HTTP Credentials)
     username: "<user>"
     password: "<http password>"
+  atlassian:                    # Samsung JIRA / Confluence (Data Center: personal access token only)
+    token: "<personal access token>"
 ```
+
+JIRA/Confluence: check with the portal's **Fetch** button next to the JIRA link (or
+`GET http://localhost:8090/api/ingest?url=<jira issue link>`). If the office JIRA uses a different auth scheme,
+adapt `TicketSource.get` (one method).
+
+Gerrit comments: "Post to Gerrit" on a finished run posts one review (summary + one inline comment). Try it on
+a test change first.
 
 ## 4. Run and verify
 
