@@ -3,6 +3,7 @@ package com.failureforge.run;
 import java.util.List;
 
 import com.failureforge.gerrit.GerritChangeUrl;
+import com.failureforge.verdict.Comparison;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.HttpStatus;
@@ -43,7 +44,8 @@ public class RunController {
 	public record SubmitResponse(long id) {
 	}
 
-	public record RunDetail(Run run, List<TestCaseResult> tests) {
+	/** {@code tests} = results on the patch; {@code comparisons} = parent vs patch with a verdict each. */
+	public record RunDetail(Run run, List<TestCaseResult> tests, List<Comparison> comparisons) {
 	}
 
 	@PostMapping
@@ -70,7 +72,7 @@ public class RunController {
 	@GetMapping("/{id}")
 	public RunDetail get(@PathVariable long id) {
 		Run run = runs.find(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-		return new RunDetail(run, runs.findTests(id));
+		return new RunDetail(run, runs.findTests(id), runs.findComparisons(id));
 	}
 
 	@GetMapping(path = "/{id}/events", produces = "text/event-stream")

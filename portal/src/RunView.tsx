@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { getRun, isFinished, watchRun, type LogEvent, type Run, type TestCase } from './api'
+import { getRun, isFinished, watchRun, type Comparison, type LogEvent, type Run, type TestCase, type TestStatus } from './api'
 import { StatusBadge } from './StatusBadge'
+import { VERDICT_LABEL } from './verdicts'
 
 export function RunView({ id, onChange }: { id: number; onChange: () => void }) {
   const [run, setRun] = useState<Run | null>(null)
   const [tests, setTests] = useState<TestCase[]>([])
+  const [comparisons, setComparisons] = useState<Comparison[]>([])
   const [log, setLog] = useState<LogEvent[]>([])
   const [error, setError] = useState<string | null>(null)
   const [followLog, setFollowLog] = useState(true)
@@ -17,6 +19,7 @@ export function RunView({ id, onChange }: { id: number; onChange: () => void }) 
         if (!cancelled) {
           setRun(d.run)
           setTests(d.tests)
+          setComparisons(d.comparisons)
         }
       })
       .catch((e: Error) => setError(e.message))
@@ -28,7 +31,13 @@ export function RunView({ id, onChange }: { id: number; onChange: () => void }) 
       (r) => {
         setRun(r)
         onChange()
-        if (isFinished(r)) getRun(id).then((d) => !cancelled && setTests(d.tests))
+        if (isFinished(r))
+          getRun(id).then((d) => {
+            if (!cancelled) {
+              setTests(d.tests)
+              setComparisons(d.comparisons)
+            }
+          })
       },
     )
     return () => {
@@ -91,7 +100,10 @@ export function RunView({ id, onChange }: { id: number; onChange: () => void }) 
 
       {run.error && <p className="error banner">Pipeline error: {run.error}</p>}
 
-      {run.status === 'SUCCEEDED' && (
+      {run.status === 'SUCCEEDED' && comparisons.length > 0 && <VerdictSection run={run} comparisons={comparisons} />}
+
+      {/* Older runs (before parent-vs-patch) only have patch results. */}
+      {run.status === 'SUCCEEDED' && comparisons.length === 0 && (
         <section>
           <div className="stats">
             <Stat label="Tests" value={run.testsTotal} />
@@ -116,6 +128,75 @@ export function RunView({ id, onChange }: { id: number; onChange: () => void }) 
       </section>
     </div>
   )
+}
+
+function VerdictSection({ run, comparisons }: { run: Run; comparisons: Comparison[] }) {
+  const [showAll, setShowAll] = useState(false)
+  const count = (v: Comparison['verdict']) => comparisons.filter((c) => c.verdict === v).length
+  // Anything other than "OK" is worth a look; show those first, hide the OK ones until asked.
+  const interesting = comparisons.filter((c) => c.verdict !== 'NOTHING_FOUND')
+  const visible = showAll ? comparisons : interesting
+  return (
+    <section>
+      <h3 className="section-heading">Before vs after the change</h3>
+      <div className="stats">
+        <Stat label="Broken by change" value={run.counterexamples} tone={run.counterexamples ? 'bad' : undefined} />
+        <Stat label="Fixed by change" value={run.fixed} tone={run.fixed ? 'good' : undefined} />
+        <Stat label="Already failing" value={run.preExisting} />
+        <Stat label="New tests" value={count('NEW_TEST')} />
+        <Stat label="OK" value={count('NOTHING_FOUND')} tone="good" />
+      </div>
+      {run.patchBuildExit !== 0 && run.testsTotal === 0 && <p className="error banner">The patch doesn't build.</p>}
+      {visible.length > 0 ? (
+        <div className="table-wrap">
+          <table className="tests">
+            <thead>
+              <tr>
+                <th>Verdict</th>
+                <th>Test</th>
+                <th>Before</th>
+                <th>After</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((c, i) => {
+                const v = VERDICT_LABEL[c.verdict]
+                return (
+                  <tr key={i}>
+                    <td>
+                      <span className={`badge badge-${v.tone}`} title={v.help}>
+                        {v.label}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="test-name">{c.name}</div>
+                      <div className="test-class">{c.className}</div>
+                      {c.message && c.verdict !== 'NOTHING_FOUND' && <div className="test-message">{c.message}</div>}
+                    </td>
+                    <td><StatusCell status={c.parentStatus} /></td>
+                    <td><StatusCell status={c.patchStatus} /></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p className="muted">Every test passes before and after the change.</p>
+      )}
+      {interesting.length !== comparisons.length && (
+        <button className="link" onClick={() => setShowAll(!showAll)}>
+          {showAll ? 'Hide the OK tests' : `Show all ${comparisons.length} tests`}
+        </button>
+      )}
+    </section>
+  )
+}
+
+function StatusCell({ status }: { status: TestStatus | null }) {
+  if (!status) return <span className="muted">—</span>
+  const tone = status === 'PASSED' ? 'good' : status === 'SKIPPED' ? 'neutral' : 'bad'
+  return <span className={`status status-${tone}`}>{status === 'PASSED' ? '✓ pass' : status.toLowerCase()}</span>
 }
 
 function Stat({ label, value, tone }: { label: string; value: number | null; tone?: string }) {

@@ -22,6 +22,11 @@ public record Run(
 		Integer testsFailed,
 		Integer testsErrors,
 		Integer testsSkipped,
+		Integer counterexamples,
+		Integer fixed,
+		Integer preExisting,
+		Integer parentBuildExit,
+		Integer patchBuildExit,
 		Instant createdAt,
 		Instant startedAt,
 		Instant finishedAt) {

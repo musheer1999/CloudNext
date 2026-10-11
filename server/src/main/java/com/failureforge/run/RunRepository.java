@@ -9,6 +9,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
+import com.failureforge.verdict.Comparison;
+import com.failureforge.verdict.Verdict;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -89,9 +91,41 @@ public class RunRepository {
 			.update();
 	}
 
-	/** Stores the test results and marks the run SUCCEEDED, in one transaction. */
+	/**
+	 * Stores the patch's test results and the parent-vs-patch verdicts, and marks the run SUCCEEDED,
+	 * in one transaction.
+	 *
+	 * @param parentBuildExit {@code null} if the parent wasn't tested (e.g. the change has no parent)
+	 */
 	@Transactional
-	public void complete(long runId, List<TestCaseResult> tests) {
+	public void complete(long runId, List<TestCaseResult> tests, List<Comparison> comparisons,
+			Integer parentBuildExit, int patchBuildExit) {
+		for (Comparison c : comparisons) {
+			jdbc.sql("""
+					INSERT INTO test_comparison (run_id, class_name, name, parent_status, patch_status, verdict, message)
+					VALUES (:runId, :className, :name, :parentStatus, :patchStatus, :verdict, :message)
+					""")
+				.param("runId", runId)
+				.param("className", c.className())
+				.param("name", c.name())
+				.param("parentStatus", c.parentStatus() == null ? null : c.parentStatus().name())
+				.param("patchStatus", c.patchStatus() == null ? null : c.patchStatus().name())
+				.param("verdict", c.verdict().name())
+				.param("message", c.message())
+				.update();
+		}
+		jdbc.sql("""
+				UPDATE run SET counterexamples = :counterexamples, fixed = :fixed, pre_existing = :preExisting,
+				       parent_build_exit = :parentBuildExit, patch_build_exit = :patchBuildExit
+				WHERE id = :id
+				""")
+			.param("counterexamples", count(comparisons, Verdict.COUNTEREXAMPLE))
+			.param("fixed", count(comparisons, Verdict.FIXED))
+			.param("preExisting", count(comparisons, Verdict.PRE_EXISTING))
+			.param("parentBuildExit", parentBuildExit)
+			.param("patchBuildExit", patchBuildExit)
+			.param("id", runId)
+			.update();
 		for (TestCaseResult t : tests) {
 			jdbc.sql("""
 					INSERT INTO test_case (run_id, class_name, name, status, duration_ms, message)
@@ -162,11 +196,31 @@ public class RunRepository {
 			.list();
 	}
 
+	public List<Comparison> findComparisons(long runId) {
+		return jdbc.sql("SELECT * FROM test_comparison WHERE run_id = :runId")
+			.param("runId", runId)
+			.query((rs, n) -> new Comparison(rs.getString("class_name"), rs.getString("name"),
+					status(rs.getString("parent_status")), status(rs.getString("patch_status")),
+					Verdict.valueOf(rs.getString("verdict")), rs.getString("message")))
+			.list()
+			.stream()
+			.sorted(Comparison.MOST_IMPORTANT_FIRST)
+			.toList();
+	}
+
 	public record LogLine(long id, String line) {
+	}
+
+	private static TestCaseResult.Status status(String s) {
+		return s == null ? null : TestCaseResult.Status.valueOf(s);
 	}
 
 	private static int count(List<TestCaseResult> tests, TestCaseResult.Status status) {
 		return (int) tests.stream().filter(t -> t.status() == status).count();
+	}
+
+	private static int count(List<Comparison> comparisons, Verdict verdict) {
+		return (int) comparisons.stream().filter(c -> c.verdict() == verdict).count();
 	}
 
 	private static final RowMapper<Run> RUN_MAPPER = (rs, n) -> new Run(
@@ -187,6 +241,11 @@ public class RunRepository {
 			nullableInt(rs, "tests_failed"),
 			nullableInt(rs, "tests_errors"),
 			nullableInt(rs, "tests_skipped"),
+			nullableInt(rs, "counterexamples"),
+			nullableInt(rs, "fixed"),
+			nullableInt(rs, "pre_existing"),
+			nullableInt(rs, "parent_build_exit"),
+			nullableInt(rs, "patch_build_exit"),
 			instant(rs.getTimestamp("created_at")),
 			instant(rs.getTimestamp("started_at")),
 			instant(rs.getTimestamp("finished_at")));

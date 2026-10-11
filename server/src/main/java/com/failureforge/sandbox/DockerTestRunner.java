@@ -57,7 +57,9 @@ public class DockerTestRunner implements TestRunner {
 
 	@Override
 	public TestRunResult runTests(Path repoDir, Consumer<String> out) {
-		String name = "failureforge-" + repoDir.getFileName();
+		// e.g. work/run-7/patch -> failureforge-run-7-patch (unique per run and side)
+		String name = ("failureforge-" + repoDir.getParent().getFileName() + "-" + repoDir.getFileName())
+			.toLowerCase().replaceAll("[^a-z0-9_.-]", "-");
 		String volume = name + "-ws";
 		BuildCommand.Tool tool = BuildCommand.detect(repoDir);
 		BuildCommand.Steps steps = BuildCommand.forContainer(repoDir);

@@ -123,6 +123,12 @@ button.link { background: none; border: none; color: var(--accent); cursor: poin
 .test-class { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .test-message { color: var(--bad); font-family: ui-monospace, Consolas, monospace; font-size: 12px; margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
+.section-heading { font-size: 15px; margin-bottom: 10px; }
+.status { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.status-good { color: var(--good); }
+.status-bad { color: var(--bad); }
+.status-neutral { color: var(--muted); }
+
 .log-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .log-head h3 { font-size: 15px; }
 .follow { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }

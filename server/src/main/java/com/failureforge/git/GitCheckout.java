@@ -37,6 +37,14 @@ public class GitCheckout {
 		git(dir, Optional.empty(), log, "checkout", "-q", "--detach", "FETCH_HEAD");
 	}
 
+	/**
+	 * Puts the parent commit in a second folder. The fetch above already downloaded it (depth 2),
+	 * so this needs no network: {@code git worktree} shares the same object store.
+	 */
+	public void checkoutParent(Path patchDir, Path parentDir, String parentSha, Consumer<String> log) {
+		git(patchDir, Optional.empty(), log, "worktree", "add", "-q", "--detach", parentDir.toString(), parentSha);
+	}
+
 	/** Fetch is the only network step; servers occasionally drop a request, so try up to 3 times. */
 	private void fetchWithRetry(GerritChange change, Path dir, Optional<String> authHeader, Consumer<String> log) {
 		for (int attempt = 1;; attempt++) {

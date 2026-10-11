@@ -4,7 +4,7 @@
 > It is the single source of truth for what we are building, what is decided, and where we are.
 > Update it every time a decision is made or a phase moves.
 
-Last updated: 2026-10-11 (Phase 1 done: Docker sandbox, D-026)
+Last updated: 2026-10-11 (Phase 2 step 2b done, D-027)
 Owner: Musheer Ahmad (Samsung R&D Institute, Noida)
 
 Full design doc: docs/DEVELOPMENT_GUIDE.md (read the relevant section before building each phase).
@@ -23,7 +23,7 @@ FailureForge is an AI agent for a Samsung internal agent contest. It takes a Ger
 | --- | --- |
 | Idea + design | Done (design doc shared with team) |
 | Phase 1 — pipeline skeleton | **Done 2026-10-11.** Portal → API → Postgres queue → worker → Gerrit REST → git checkout → **Docker sandbox** (D-026) → JUnit results + live log in portal. Verified on GerritHub change 1236098, run #6: 88/88 tests pass in 72 s, test step with `--network none`, no containers left behind. Known gaps: Gradle path in Docker not yet tested on a real repo; no automated test of the timeout path. |
-| Phase 2 — rules + Boundary specialist | Not started. Next. |
+| Phase 2 — rules + Boundary specialist | **In progress.** Steps: 2a sample repo with planted bug (needs owner's GerritHub repo) · **2b parent vs patch + verdict engine: done 2026-10-11 (D-027)** · 2c read diff/JIRA/wiki · 2d LLM client + rule extraction · 2e Boundary specialist + test writer + repair loop · 2f end-to-end demo. LLM for dev: Ollama on the laptop (free); model being chosen by a test (qwen3.5:9b vs qwen3:8b). |
 | Code repository | Local git repo at `D:\CloudNext`, branch `main` (`server/`, `portal/`, `docs/`). First commit fd1c691 on 2026-10-11 (Phase 1). Pushed to GitHub (public): https://github.com/musheer1999/CloudNext |
 | LLM in use | Claude API (see D-004); no LLM calls yet (Phase 1 has no AI) |
 | Dev machine (personal laptop) | JDK 23, Node 24.21, PostgreSQL 16 (Windows service; may need a manual start), git, WSL2 Ubuntu + Docker Engine 29.1 (called as `wsl -d Ubuntu -e docker`). Port 8080 taken by Apache httpd. |
@@ -210,6 +210,12 @@ Status: **Decided** = team/owner confirmed · **Proposed** = in design doc, not 
 - Decision: Per run, `DockerTestRunner` (1) copies the checkout into a fresh Docker volume with `docker cp` (the container never writes to the host checkout); (2) **prepare** container, network on: downloads dependencies and compiles, runs no tests; for Maven it also fetches the surefire test-runner add-ons (junit4, junit47, junit-platform, testng) for the detected surefire version, because Maven only downloads them when tests actually run; (3) **test** container with `--network none`, `--cpus 2 --memory 4g --pids-limit 2048`, 10 min limit, then gathers JUnit XML reports into `/workspace/.ff-reports`; (4) copies only the reports back; (5) removes containers and volume (also on errors/timeouts). Dependencies are cached in shared volumes `failureforge-m2` / `failureforge-gradle`. Image `maven:3.9-eclipse-temurin-21`. Git checkout uses `core.autocrlf=false`. Default sandbox mode is now `docker`; `local` stays as an explicit dev-only option.
 - Why: Tests (and from Phase 2, AI-written tests) are the untrusted part, so they get no network. Bind-mounting `/mnt/d` from WSL broke Mockito (Java attach refuses files whose owner looks wrong) and was ~6× slower; a volume is native Linux disk. With this flow the 2 Windows-only CRLF failures disappeared (88/88 pass).
 - Trade-off: the prepare step runs the project's build plugins with network on (needed to download dependencies). Later option: allow only the Maven mirror instead of the whole internet. D-009's "read-only cache" is not applied yet (cache is read-write in both steps).
+
+### D-027 — Every run tests parent AND patch; verdict table extended
+- Date: 2026-10-11 · Status: Proposed
+- Decision: The worker checks out the patch in `work/run-N/patch` and the parent in `work/run-N/parent` (`git worktree`, no extra download), runs the sandbox on both, and `VerdictEngine` (plain code) compares every test by `class#name`. Verdicts: COUNTEREXAMPLE (pass → fail), PRE_EXISTING (fail → fail), FIXED (fail → pass, new), NOTHING_FOUND (pass → pass), NEW_TEST (only in patch, new), REMOVED (only in parent, new), COULDNT_CHECK (skipped, or that side didn't build). Stored in `test_comparison`; counts on `run`. A patch that doesn't build while the parent does is reported, not hidden. Implements D-007 for existing tests now; generated tests (Phase 2) reuse it.
+- Why: Proves whether the change caused a failure. Run #7 (change 1236098, a bug fix) showed 88/88 NOTHING_FOUND: the existing tests never noticed the fixed bug, which is the gap generated tests must fill (good pitch point).
+- Cost: each run takes about twice as long (~2 min for that repo); dependencies are cached so the parent's prepare step is fast.
 
 ## 6. Open questions
 

@@ -20,6 +20,11 @@ export interface Run {
   testsFailed: number | null
   testsErrors: number | null
   testsSkipped: number | null
+  counterexamples: number | null
+  fixed: number | null
+  preExisting: number | null
+  parentBuildExit: number | null
+  patchBuildExit: number | null
   createdAt: string
   startedAt: string | null
   finishedAt: string | null
@@ -33,9 +38,31 @@ export interface TestCase {
   message: string | null
 }
 
+export type TestStatus = TestCase['status']
+
+export type Verdict =
+  | 'COUNTEREXAMPLE'
+  | 'PRE_EXISTING'
+  | 'FIXED'
+  | 'NOTHING_FOUND'
+  | 'NEW_TEST'
+  | 'REMOVED'
+  | 'COULDNT_CHECK'
+
+/** One test compared on the parent commit and on the patch (server: verdict/Comparison.java). */
+export interface Comparison {
+  className: string
+  name: string
+  parentStatus: TestStatus | null
+  patchStatus: TestStatus | null
+  verdict: Verdict
+  message: string | null
+}
+
 export interface RunDetail {
   run: Run
   tests: TestCase[]
+  comparisons: Comparison[]
 }
 
 export interface LogEvent {
