@@ -15,7 +15,18 @@ final class LlmJson {
 		if (start < 0 || end <= start) {
 			throw new IllegalArgumentException("no JSON object in the answer");
 		}
-		return json.readTree(answer.substring(start, end + 1));
+		String text = answer.substring(start, end + 1);
+		try {
+			return json.readTree(text);
+		}
+		catch (RuntimeException e) {
+			// Common small-model slip: Java-style string concatenation inside JSON ("a" + "b"). Join and retry once.
+			String repaired = text.replaceAll("\"\\s*\\+\\s*\"", "");
+			if (repaired.equals(text)) {
+				throw e;
+			}
+			return json.readTree(repaired);
+		}
 	}
 
 	/** The content of the first ```java fence, or the whole answer if there is none. */

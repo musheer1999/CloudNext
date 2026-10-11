@@ -35,6 +35,13 @@ class AgentPartsTest {
 	}
 
 	@Test
+	void javaStyleStringConcatenationInJsonIsRepaired() {
+		var node = LlmJson.object(JsonMapper.builder().build(),
+				"{\"rules\":[{\"id\":\"R1\",\"source_quote\":\"int x = a\" + \" + 5;\"}]}");
+		assertThat(node.path("rules").path(0).path("source_quote").asString()).isEqualTo("int x = a + 5;");
+	}
+
+	@Test
 	void quoteCheckToleratesMarkdownAndSmallRewording() {
 		Rule rule = new Rule("R1", "x", "boundary", "the total discount can never be more than 100%", "ticket", "", true, null);
 		assertThat(RuleExtractor.check(rule, TICKET, "").kept()).isTrue();

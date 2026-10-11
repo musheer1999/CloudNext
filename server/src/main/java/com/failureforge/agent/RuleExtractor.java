@@ -47,9 +47,16 @@ public class RuleExtractor {
 				+ "\nList at most " + maxRules + " rules.";
 		int tokens = 0;
 		RuntimeException last = null;
+		String previous = null;
 		for (int attempt = 1; attempt <= ATTEMPTS; attempt++) {
 			out.accept("[agent] asking " + llm.model() + " for rules (attempt " + attempt + "/" + ATTEMPTS + ")...");
-			LlmClient.Answer answer = llm.chat(SYSTEM, user);
+			// A retry must say what was wrong: at temperature 0 the same question gives the same answer.
+			String question = previous == null ? user
+					: user + "\n\nYour previous answer was not valid JSON (" + last.getMessage().lines().findFirst().orElse("")
+							+ "). Answer again with ONLY the JSON object. Inside JSON strings, write code as plain text: "
+							+ "no + signs between strings, no line breaks, and escape double quotes as \\\".";
+			LlmClient.Answer answer = llm.chat(SYSTEM, question);
+			previous = answer.text();
 			tokens += answer.totalTokens();
 			out.accept("[agent] answer after " + answer.took().toSeconds() + " s, " + answer.totalTokens() + " tokens");
 			try {

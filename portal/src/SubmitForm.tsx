@@ -61,6 +61,11 @@ export function SubmitForm({ onSubmitted }: { onSubmitted: (id: number) => void 
         Wiki links (one per line)
         <textarea rows={2} value={wikiUrls} onChange={(e) => setWikiUrls(e.target.value)} />
       </label>
+      {gerritUrl.trim() && !ticketText.trim() && (
+        <p className="warning">
+          No ticket text: the AI can only guess the rules from the code. Paste the ticket for real results.
+        </p>
+      )}
       <p className="hint">The AI reads the ticket text and the code change. JIRA/wiki links are saved for later.</p>
       {error && <p className="error">{error}</p>}
       <button type="submit" className="primary" disabled={busy}>
