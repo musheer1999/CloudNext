@@ -50,7 +50,8 @@ failureforge:
     # false = Phase 1 behaviour only (existing tests), no LLM calls.
     enabled: ${FF_AGENT_ENABLED:true}
     max-rules: 6
-    max-attacks: 3
+    # Rules attacked per run (each takes ~1.5 min with the laptop model). FF_MAX_ATTACKS=1 for a quick live demo.
+    max-attacks: ${FF_MAX_ATTACKS:3}
     max-repairs: 3
     jqwik-version: 1.10.2
   # Folder where each run's checkout lives: <work-dir>/run-<id>
