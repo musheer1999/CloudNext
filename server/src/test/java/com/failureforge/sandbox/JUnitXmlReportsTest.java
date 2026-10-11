@@ -52,6 +52,25 @@ class JUnitXmlReportsTest {
 	}
 
 	@Test
+	void failedThenPassedOnRerunIsFlaky(@TempDir Path repo) throws Exception {
+		Path dir = Files.createDirectories(repo.resolve("target/surefire-reports"));
+		Files.writeString(dir.resolve("TEST-x.xml"), """
+				<testsuite name="x">
+				  <testcase name="race" classname="x.RaceTest" time="0.5">
+				    <flakyFailure message="lost update" type="java.lang.AssertionError">trace</flakyFailure>
+				  </testcase>
+				  <testcase name="always" classname="x.RaceTest" time="0.5">
+				    <failure message="boom" type="java.lang.AssertionError">trace</failure>
+				    <rerunFailure message="boom" type="java.lang.AssertionError">trace</rerunFailure>
+				  </testcase>
+				</testsuite>
+				""");
+		assertThat(JUnitXmlReports.collect(repo)).extracting(TestCaseResult::name, TestCaseResult::status)
+			.containsExactly(org.assertj.core.groups.Tuple.tuple("race", Status.FLAKY),
+					org.assertj.core.groups.Tuple.tuple("always", Status.FAILED));
+	}
+
+	@Test
 	void refusesDoctypeToBlockXxe(@TempDir Path repo) throws Exception {
 		Path dir = Files.createDirectories(repo.resolve("target/surefire-reports"));
 		Files.writeString(dir.resolve("TEST-evil.xml"), """

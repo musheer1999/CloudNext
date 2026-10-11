@@ -74,6 +74,11 @@ public final class JUnitXmlReports {
 				status = TestCaseResult.Status.SKIPPED;
 				message = blankToNull(problem.getAttribute("message"));
 			}
+			else if ((problem = child(tc, "flakyFailure")) != null || (problem = child(tc, "flakyError")) != null) {
+				// Surefire re-ran it: it failed, then passed. Inconsistent = flaky (D-010).
+				status = TestCaseResult.Status.FLAKY;
+				message = message(problem);
+			}
 			results.add(new TestCaseResult(tc.getAttribute("classname"), tc.getAttribute("name"), status,
 					seconds(tc.getAttribute("time")), message));
 		}

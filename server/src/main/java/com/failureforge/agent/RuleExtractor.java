@@ -23,8 +23,15 @@ public class RuleExtractor {
 	static final String SYSTEM = """
 			You are the rule extractor of FailureForge, a tool that tries to break code changes.
 			From a ticket and a code change, list the rules the changed code must ALWAYS guarantee.
-			Each rule must be checkable by calling the changed public Java code with different inputs.
-			Prefer rules about limits and edge values (types: "boundary"). Other types: "state", "concurrency", "compat".
+			Each rule must be checkable by calling the changed public Java code.
+			Give each rule ONE type:
+			- "boundary": about input limits and edge values (zero, maximum, negative results, overflow).
+			- "state": about the ORDER of operations or the object's state (e.g. no refund after cancel,
+			  no double payment, can't use a closed object).
+			- "concurrency": about correctness when several threads call the code at the same time
+			  (e.g. stock never oversold, no lost updates).
+			- "compat": about existing callers or stored data still working (method names, parameters, formats).
+			Prefer rules that say what must NEVER or ALWAYS happen over single examples.
 			Each rule MUST copy, word for word, the sentence or phrase it comes from into "source_quote".
 			Answer with ONLY a JSON object, no other text, in exactly this form:
 			{"rules":[{"id":"R1","rule":"...","type":"boundary","source_quote":"...","source":"ticket","code_location":"Class.method"}]}
@@ -41,10 +48,24 @@ public class RuleExtractor {
 	public record Result(List<Rule> rules, int tokens) {
 	}
 
-	public Result extract(String ticket, ChangeContext change, int maxRules, Consumer<String> out) {
-		String user = "TICKET:\n" + (ticket == null || ticket.isBlank() ? "(no ticket given)" : ticket.strip())
-				+ "\n\nCODE CHANGE (git diff):\n" + change.diff()
-				+ "\nList at most " + maxRules + " rules.";
+	/**
+	 * @param constraints    developer constraints from disputes (D-034): assumed true, rules must not contradict them
+	 * @param falsePositives rule texts marked FALSE POSITIVE on this repo before: such rules are dropped
+	 */
+	public Result extract(String ticket, ChangeContext change, String constraints, List<String> falsePositives,
+			int maxRules, Consumer<String> out) {
+		StringBuilder prompt = new StringBuilder("TICKET:\n")
+			.append(ticket == null || ticket.isBlank() ? "(no ticket given)" : ticket.strip())
+			.append("\n\nCODE CHANGE (git diff):\n").append(change.diff());
+		if (constraints != null && !constraints.isBlank()) {
+			prompt.append("\nDEVELOPER CONSTRAINTS (assume these are always true; no rule may contradict them):\n")
+				.append(constraints.strip()).append('\n');
+		}
+		if (!falsePositives.isEmpty()) {
+			prompt.append("\nDevelopers rejected these rules before as false positives; do not propose them again:\n");
+			falsePositives.forEach(fp -> prompt.append("- ").append(fp).append('\n'));
+		}
+		String user = prompt.append("\nList at most ").append(maxRules).append(" rules.").toString();
 		int tokens = 0;
 		RuntimeException last = null;
 		String previous = null;
@@ -60,7 +81,10 @@ public class RuleExtractor {
 			tokens += answer.totalTokens();
 			out.accept("[agent] answer after " + answer.took().toSeconds() + " s, " + answer.totalTokens() + " tokens");
 			try {
-				List<Rule> rules = parse(answer.text(), ticket, change.diff(), maxRules);
+				List<Rule> rules = parse(answer.text(), ticket, change.diff(), maxRules).stream()
+					.map(r -> r.kept() && isFalsePositive(r, falsePositives)
+							? r.dropped("marked FALSE POSITIVE on this repo before") : r)
+					.toList();
 				return new Result(rules, tokens);
 			}
 			catch (RuntimeException e) {
@@ -115,6 +139,22 @@ public class RuleExtractor {
 			return rule;
 		}
 		return rule.dropped("source quote not found in the ticket or the diff");
+	}
+
+	/** Same rule again, even if worded a bit differently: ≥80% of its meaningful words match a rejected rule. */
+	static boolean isFalsePositive(Rule rule, List<String> falsePositives) {
+		List<String> words = Arrays.stream(normalize(rule.text()).split(" ")).filter(w -> w.length() >= 4).toList();
+		if (words.isEmpty()) {
+			return false;
+		}
+		for (String fp : falsePositives) {
+			String other = normalize(fp);
+			long same = words.stream().filter(other::contains).count();
+			if (same >= Math.ceil(words.size() * 0.8)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private static String normalize(String s) {

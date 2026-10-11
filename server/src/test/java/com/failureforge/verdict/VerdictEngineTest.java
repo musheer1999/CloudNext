@@ -30,6 +30,8 @@ class VerdictEngineTest {
 		assertThat(VerdictEngine.verdict(null, false, FAILED)).isEqualTo(Verdict.COULDNT_CHECK);
 		assertThat(VerdictEngine.verdict(PASSED, true, SKIPPED)).isEqualTo(Verdict.COULDNT_CHECK);
 		assertThat(VerdictEngine.verdict(SKIPPED, true, PASSED)).isEqualTo(Verdict.COULDNT_CHECK);
+		assertThat(VerdictEngine.verdict(PASSED, true, Status.FLAKY)).isEqualTo(Verdict.FLAKY);
+		assertThat(VerdictEngine.verdict(Status.FLAKY, true, FAILED)).isEqualTo(Verdict.FLAKY);
 	}
 
 	@Test

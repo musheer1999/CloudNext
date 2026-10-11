@@ -9,8 +9,11 @@ import java.util.function.Consumer;
 
 import com.failureforge.agent.AttackLoop;
 import com.failureforge.agent.ChangeContext;
+import com.failureforge.agent.CompatCheck;
 import com.failureforge.agent.Rule;
 import com.failureforge.agent.RuleExtractor;
+import com.failureforge.agent.Specialist;
+import com.failureforge.ticket.TicketSource;
 import com.failureforge.config.FailureForgeProperties;
 import com.failureforge.process.ProcessRunner;
 import com.failureforge.gerrit.GerritChange;
@@ -30,8 +33,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * The Phase 1 pipeline for one run: resolve the Gerrit change, check it out, run its existing tests.
- * Phase 2 adds rule extraction, specialists and the verdict engine between "checkout" and "report".
+ * The pipeline for one run: resolve the Gerrit change, check out patch and parent, run the existing tests on
+ * both, then the specialists (Compat via japicmp; Boundary, State, Concurrency via generated jqwik tests),
+ * and let the verdict engine (plain code) compare everything.
  */
 @Component
 public class RunPipeline {
@@ -47,10 +51,12 @@ public class RunPipeline {
 	private final ProcessRunner processes;
 	private final RuleExtractor rules;
 	private final AttackLoop attacks;
+	private final CompatCheck compat;
+	private final TicketSource tickets;
 
 	public RunPipeline(RunRepository runs, RunEvents events, GerritClient gerrit, GitCheckout git,
 			TestRunner testRunner, FailureForgeProperties props, ProcessRunner processes, RuleExtractor rules,
-			AttackLoop attacks) {
+			AttackLoop attacks, CompatCheck compat, TicketSource tickets) {
 		this.runs = runs;
 		this.events = events;
 		this.gerrit = gerrit;
@@ -60,6 +66,8 @@ public class RunPipeline {
 		this.processes = processes;
 		this.rules = rules;
 		this.attacks = attacks;
+		this.compat = compat;
+		this.tickets = tickets;
 	}
 
 	public void execute(Run run) {
@@ -149,14 +157,32 @@ public class RunPipeline {
 	}
 
 	/**
-	 * Rules + attacks. Never fails the run: if the LLM is down or confused, the run still reports
-	 * the existing-test results, and the log says what went wrong.
+	 * Specialists. Never fails the run: if the LLM is down or confused, the run still reports the
+	 * existing-test results, and the log says what went wrong.
 	 *
-	 * @return the generated tests' comparisons, to show next to the existing ones
+	 * @return the generated checks' comparisons, to show next to the existing ones
 	 */
 	private List<Comparison> agent(long id, Run run, Path patchDir, Path parentDir, String parentSha,
 			Consumer<String> out) {
 		List<Comparison> found = new ArrayList<>();
+
+		// Compat specialist first: no LLM, and it needs the classes compiled by the full runs above (D-032).
+		step(id, "COMPAT");
+		out.accept("===== Compat specialist: does the change break existing callers? (japicmp, no AI) =====");
+		try {
+			AttackLoop.Result compat = this.compat.check(patchDir, parentDir, out);
+			if (compat != null) {
+				long ruleId = runs.saveRules(id, List.of(compat.rule())).getFirst();
+				runs.saveAttack(id, ruleId, compat);
+				found.addAll(compat.comparisons());
+				events.statusChanged(id);
+			}
+		}
+		catch (RuntimeException e) {
+			log.warn("Compat check failed for run {}", id, e);
+			out.accept("[compat] ERROR: " + e.getMessage());
+		}
+
 		try {
 			step(id, "RULES");
 			out.accept("===== Agent: rules the change must guarantee =====");
@@ -165,10 +191,20 @@ public class RunPipeline {
 				out.accept("[agent] the change touches no main Java code: nothing to attack");
 				return found;
 			}
-			if (run.ticketText() == null) {
+			String ticket = tickets.resolve(run, out);
+			if (ticket == null) {
 				out.accept("[agent] no ticket text was given: rules can only come from the code diff");
 			}
-			RuleExtractor.Result extracted = rules.extract(run.ticketText(), context, props.agent().maxRules(), out);
+			String constraints = run.constraints() == null ? "" : run.constraints();
+			if (!constraints.isBlank()) {
+				out.accept("[agent] developer constraints from disputes: " + constraints.replace('\n', ' '));
+			}
+			List<String> falsePositives = runs.falsePositiveRules(run.gerritProject());
+			if (!falsePositives.isEmpty()) {
+				out.accept("[agent] " + falsePositives.size() + " rule(s) marked FALSE POSITIVE before on this repo will be skipped");
+			}
+			RuleExtractor.Result extracted = rules.extract(ticket, context, constraints, falsePositives,
+					props.agent().maxRules(), out);
 			runs.addTokens(id, extracted.tokens());
 			List<Long> ruleIds = runs.saveRules(id, extracted.rules());
 			for (Rule r : extracted.rules()) {
@@ -178,32 +214,18 @@ public class RunPipeline {
 			}
 			events.statusChanged(id);
 
-			// Phase 2 attacks boundary rules; if the model typed none as boundary, try the kept ones anyway.
-			List<Integer> targets = new ArrayList<>();
-			for (int i = 0; i < extracted.rules().size(); i++) {
-				if (extracted.rules().get(i).kept() && extracted.rules().get(i).type().contains("boundary")) {
-					targets.add(i);
-				}
-			}
-			if (targets.isEmpty()) {
-				for (int i = 0; i < extracted.rules().size(); i++) {
-					if (extracted.rules().get(i).kept()) {
-						targets.add(i);
-					}
-				}
-			}
-			// "Always/never" rules first; stable sort keeps the LLM's order otherwise.
-			targets.sort(java.util.Comparator.comparingInt((Integer i) -> -AttackLoop.invariantScore(extracted.rules().get(i))));
-			targets = targets.subList(0, Math.min(targets.size(), props.agent().maxAttacks()));
-			out.accept("[agent] attacking " + targets.stream().map(i -> extracted.rules().get(i).key()).toList()
-					+ " (always/never rules first)");
+			List<Integer> targets = pickTargets(extracted.rules(), props.agent().maxAttacks());
+			out.accept("[agent] attacking " + targets.stream()
+				.map(i -> extracted.rules().get(i).key() + " (" + Specialist.forRuleType(extracted.rules().get(i).type()).label() + ")")
+				.toList() + ": one per specialist first, always/never rules first");
 
 			step(id, "ATTACKING");
 			for (int i : targets) {
 				Rule rule = extracted.rules().get(i);
-				out.accept("===== Agent: attacking " + rule.key() + " (Boundary specialist) =====");
+				Specialist specialist = Specialist.forRuleType(rule.type());
+				out.accept("===== " + specialist.label() + " specialist: attacking " + rule.key() + " =====");
 				try {
-					AttackLoop.Result result = attacks.attack(rule, context, patchDir, parentDir, out);
+					AttackLoop.Result result = attacks.attack(specialist, rule, context, constraints, patchDir, parentDir, out);
 					runs.addTokens(id, result.tokens());
 					runs.saveAttack(id, ruleIds.get(i), result);
 					found.addAll(result.comparisons());
@@ -217,9 +239,36 @@ public class RunPipeline {
 		}
 		catch (RuntimeException e) {
 			log.warn("Agent failed for run {}", id, e);
-			out.accept("[agent] ERROR: " + e.getMessage() + " (the existing-test results above still count)");
+			out.accept("[agent] ERROR: " + e.getMessage() + " (the results above still count)");
 		}
 		return found;
+	}
+
+	/**
+	 * Which rules to attack: kept, not Compat (japicmp already covers that), one per specialist first so every
+	 * kind of attack gets a turn, "always/never" rules before examples, then the rest, up to {@code max}.
+	 */
+	static List<Integer> pickTargets(List<Rule> rules, int max) {
+		List<Integer> candidates = new ArrayList<>();
+		for (int i = 0; i < rules.size(); i++) {
+			if (rules.get(i).kept() && Specialist.forRuleType(rules.get(i).type()) != Specialist.COMPAT) {
+				candidates.add(i);
+			}
+		}
+		candidates.sort(java.util.Comparator.comparingInt((Integer i) -> -AttackLoop.invariantScore(rules.get(i))));
+		List<Integer> picked = new ArrayList<>();
+		java.util.Set<Specialist> seen = java.util.EnumSet.noneOf(Specialist.class);
+		for (int i : candidates) {
+			if (seen.add(Specialist.forRuleType(rules.get(i).type()))) {
+				picked.add(i);
+			}
+		}
+		for (int i : candidates) {
+			if (!picked.contains(i)) {
+				picked.add(i);
+			}
+		}
+		return picked.subList(0, Math.min(picked.size(), max));
 	}
 
 	/** A side "built" unless the build stopped before any test ran. */

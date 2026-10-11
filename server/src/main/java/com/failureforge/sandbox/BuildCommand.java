@@ -68,7 +68,10 @@ public final class BuildCommand {
 		if (detect(repo) == Tool.MAVEN) {
 			// The repo's own wrapper pins its Maven version; otherwise the image's mvn.
 			String mvn = Files.exists(repo.resolve("mvnw")) ? "sh ./mvnw" : "mvn";
-			String only = testClass == null ? "" : " -Dtest=" + testClass + " -Dsurefire.failIfNoSpecifiedTests=false";
+			// For generated tests: re-run failures up to 4 more times (5 runs in all, D-010); surefire marks
+			// "failed, then passed" as flaky in the report.
+			String only = testClass == null ? "" : " -Dtest=" + testClass + " -Dsurefire.failIfNoSpecifiedTests=false"
+					+ " -Dsurefire.rerunFailingTestsCount=4";
 			return new Steps(
 					// -Dtest=none with failIfNoSpecifiedTests=false resolves the test runner plugins
 					// without running any test, so the offline step finds everything it needs.

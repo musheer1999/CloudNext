@@ -9,54 +9,33 @@ import com.failureforge.llm.LlmClient;
 import org.springframework.stereotype.Component;
 
 /**
- * The Boundary specialist + test writer (design doc sections 3 and 4): writes one jqwik property test
- * that attacks a rule at its limits, and repairs it from compiler errors. jqwik, not the LLM, picks
- * the actual input values and shrinks any failure (D-006): the LLM only says what to check and where.
+ * The test writer behind the Boundary, State and Concurrency specialists (design doc sections 3 and 4):
+ * writes one jqwik test that attacks a rule, and repairs it from compiler errors. jqwik, not the LLM, picks
+ * the actual input values (or operation sequences) and shrinks any failure (D-006): the LLM only says
+ * what to check and where.
  */
 @Component
-public class BoundarySpecialist {
+public class TestWriter {
 
-	static final String SYSTEM = """
-			You are the Boundary specialist of FailureForge. You write ONE jqwik property-based test class
-			that tries to break a rule by calling the code under test with limits and edge values.
-			Strict requirements:
-			1. Output only Java code, in one ```java block.
-			2. Use exactly the package and class name you are given. The class is package-private (no "public").
-			3. Only these imports: net.jqwik.api.*, net.jqwik.api.constraints.*, java.util.*.
-			   No JUnit, no AssertJ, no Mockito.
-			4. CALL THE REAL CODE UNDER TEST and check what it returns. Never copy or re-implement its logic
-			   in the test: a test that does its own calculation proves nothing.
-			5. Write @Property(tries = 1000) methods. EVERY parameter has @ForAll, plus a range that keeps it to
-			   VALID inputs the method accepts (read its checks and comments): @IntRange(min = .., max = ..),
-			   @LongRange(min = .., max = ..). Ranges include the limits themselves (e.g. 0 and 100).
-			   Keep amounts realistic: at most 10_000_000 unless the code says otherwise. Never Long.MAX_VALUE.
-			6. Call only public or package-private code. No reflection.
-			7. Check the rule with an if statement and throw new AssertionError(message) when it is broken.
-			   The message MUST contain every input value and the result.
-			8. Do not catch exceptions from the code under test.
+	/** Rules every specialist's test follows; the specialist adds its role, technique and an example. */
+	static String system(Specialist s) {
+		return s.role + """
+				Strict requirements:
+				1. Output only Java code, in one ```java block.
+				2. Use exactly the package and class name you are given. The class is package-private (no "public").
+				3. Only these imports: net.jqwik.api.*, net.jqwik.api.constraints.*, java.util.* (plus what the
+				   technique below allows). No JUnit, no AssertJ, no Mockito.
+				4. CALL THE REAL CODE UNDER TEST and check what it does. Never copy or re-implement its logic
+				   in the test: a test that does its own calculation proves nothing.
+				5. """ + s.technique + """
 
-			Example (for a different class, Stock.remove(int quantity) which returns the units left):
-			```java
-			package com.acme.store;
+				6. Call only public or package-private code. No reflection.
+				7. Check the rule with an if statement and throw new AssertionError(message) when it is broken.
+				   The message MUST contain every input value and the result.
+				8. Do not catch exceptions from the code under test, except where the technique above says so.
 
-			import net.jqwik.api.*;
-			import net.jqwik.api.constraints.*;
-
-			class FailureForgeR1Test {
-
-				@Property(tries = 1000)
-				void stockNeverGoesBelowZero(@ForAll @IntRange(min = 0, max = 1000) int initial,
-						@ForAll @IntRange(min = 0, max = 1000) int quantity) {
-					Assume.that(quantity <= initial);
-					Stock stock = new Stock(initial);
-					int left = stock.remove(quantity);
-					if (left < 0) {
-						throw new AssertionError("initial=" + initial + ", quantity=" + quantity + " -> left=" + left);
-					}
-				}
-			}
-			```
-			""";
+				""" + s.example + "\n";
+	}
 
 	private static final Pattern PACKAGE = Pattern.compile("(?m)^\\s*package\\s+[\\w.]+\\s*;");
 	private static final Pattern FIRST_CLASS = Pattern.compile("(?m)^(\\s*(?:public\\s+|final\\s+)*class\\s+)(\\w+)");
@@ -66,14 +45,16 @@ public class BoundarySpecialist {
 
 	private final LlmClient llm;
 
-	public BoundarySpecialist(LlmClient llm) {
+	public TestWriter(LlmClient llm) {
 		this.llm = llm;
 	}
 
 	public record Draft(String code, int tokens, long seconds) {
 	}
 
-	public Draft write(Rule rule, ChangeContext change, String packageName, String className) {
+	/** @param constraints developer constraints from disputes (D-034), may be empty */
+	public Draft write(Specialist specialist, Rule rule, ChangeContext change, String constraints, String packageName,
+			String className) {
 		StringBuilder user = new StringBuilder("RULE ").append(rule.key()).append(": ").append(rule.text())
 			.append("\n(comes from: \"").append(rule.sourceQuote()).append("\")\n\nCODE UNDER TEST:\n");
 		for (ChangeContext.SourceFile f : change.changedFiles()) {
@@ -81,18 +62,23 @@ public class BoundarySpecialist {
 		}
 		user.append("\nWrite the test class ").append(className).append(" in package ").append(packageName)
 			.append(" that tries to break rule ").append(rule.key()).append('.');
-		return ask(user.toString(), packageName, className);
+		if (!constraints.isBlank()) {
+			user.append("\n\nThe developers say these are ALWAYS true; do not generate cases that break them:\n")
+				.append(constraints);
+		}
+		return ask(specialist, user.toString(), packageName, className);
 	}
 
-	public Draft repair(String previousCode, String compilerErrors, String packageName, String className) {
+	public Draft repair(Specialist specialist, String previousCode, String compilerErrors, String packageName,
+			String className) {
 		String user = "This test class did not compile:\n```java\n" + previousCode + "\n```\n\nCompiler errors:\n"
 				+ compilerErrors + "\n\nReturn the full corrected class " + className + " in package " + packageName
 				+ ", following all the requirements.";
-		return ask(user, packageName, className);
+		return ask(specialist, user, packageName, className);
 	}
 
-	private Draft ask(String user, String packageName, String className) {
-		LlmClient.Answer answer = llm.chat(SYSTEM, user);
+	private Draft ask(Specialist specialist, String user, String packageName, String className) {
+		LlmClient.Answer answer = llm.chat(system(specialist), user);
 		return new Draft(normalize(LlmJson.javaCode(answer.text()), packageName, className), answer.totalTokens(),
 				answer.took().toSeconds());
 	}

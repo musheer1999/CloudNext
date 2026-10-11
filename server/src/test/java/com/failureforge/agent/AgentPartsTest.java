@@ -75,9 +75,9 @@ class AgentPartsTest {
 	@Test
 	void generatedCodeGetsOurPackageAndClassName() {
 		String code = LlmJson.javaCode("Sure!\n```java\npackage wrong;\nimport net.jqwik.api.*;\npublic class Whatever {\n}\n```\nDone.");
-		String fixed = BoundarySpecialist.normalize(code, "com.example.shop", "FailureForgeR1Test");
+		String fixed = TestWriter.normalize(code, "com.example.shop", "FailureForgeR1Test");
 		assertThat(fixed).startsWith("package com.example.shop;").contains("class FailureForgeR1Test").doesNotContain("public class");
-		assertThat(BoundarySpecialist.normalize("class A {}", "p", "B")).isEqualTo("package p;\n\nclass B {}\n");
+		assertThat(TestWriter.normalize("class A {}", "p", "B")).isEqualTo("package p;\n\nclass B {}\n");
 	}
 
 	@Test
@@ -91,7 +91,7 @@ class AgentPartsTest {
 					}
 					void helper(int x) {}
 				}""";
-		String fixed = BoundarySpecialist.addMissingForAll(code);
+		String fixed = TestWriter.addMissingForAll(code);
 		assertThat(fixed).contains("@ForAll @LongRange(min = 0, max = 10) long price")
 			.contains("@ForAll @IntRange(min = 0, max = 100) int discount")
 			.contains("@ForAll boolean member")
@@ -102,8 +102,8 @@ class AgentPartsTest {
 	@Test
 	void testMustCallTheChangedClass() {
 		var change = new ChangeContext("", List.of(new ChangeContext.SourceFile("src/main/java/a/Pricing.java", "")));
-		assertThat(BoundarySpecialist.callsCodeUnderTest("long r = Pricing.finalPrice(1, 2, true);", change)).isTrue();
-		assertThat(BoundarySpecialist.callsCodeUnderTest("long r = p * 3 / 100; // like Pricing does", change)).isFalse();
+		assertThat(TestWriter.callsCodeUnderTest("long r = Pricing.finalPrice(1, 2, true);", change)).isTrue();
+		assertThat(TestWriter.callsCodeUnderTest("long r = p * 3 / 100; // like Pricing does", change)).isFalse();
 	}
 
 	@Test

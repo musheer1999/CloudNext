@@ -6,6 +6,8 @@ public enum Verdict {
 	COUNTEREXAMPLE,
 	/** Fails both before and after: a bug older than this change, or a wrong test. Low confidence. */
 	PRE_EXISTING,
+	/** Gave different results on re-runs (D-010): not trusted either way, never reported as a bug. */
+	FLAKY,
 	/** Fails before, passes after: the change fixed it. */
 	FIXED,
 	/** Passes both before and after. */

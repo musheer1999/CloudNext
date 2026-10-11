@@ -23,6 +23,14 @@ public interface TestRunner {
 	TestRunResult runTests(Path repoDir, Consumer<String> log, String testClass);
 
 	/**
+	 * Compares two folders of compiled classes and returns what would break existing callers (D-032).
+	 * Only the Docker sandbox supports it.
+	 */
+	default List<String> apiBreaks(Path oldClasses, Path newClasses, Consumer<String> log) {
+		throw new UnsupportedOperationException("the Compat check needs failureforge.sandbox.mode=docker");
+	}
+
+	/**
 	 * @param buildExitCode exit code of mvn/gradle (non-zero if any test failed, or the build broke)
 	 * @param timedOut      the build was killed for taking too long
 	 * @param tests         every test case found in the JUnit XML reports

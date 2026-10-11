@@ -50,6 +50,9 @@ public final class VerdictEngine {
 		if (after == Status.SKIPPED || before == Status.SKIPPED) {
 			return Verdict.COULDNT_CHECK;
 		}
+		if (after == Status.FLAKY || before == Status.FLAKY) {
+			return Verdict.FLAKY;
+		}
 		if (before == null) {
 			// No parent result: either the test is new, or the parent didn't build.
 			return parentBuilt ? Verdict.NEW_TEST : Verdict.COULDNT_CHECK;

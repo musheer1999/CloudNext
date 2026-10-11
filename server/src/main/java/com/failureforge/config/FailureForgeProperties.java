@@ -10,7 +10,14 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @ConfigurationProperties(prefix = "failureforge")
 public record FailureForgeProperties(Path workDir, Worker worker, Gerrit gerrit, Sandbox sandbox, Llm llm,
-		Agent agent) {
+		Agent agent, Atlassian atlassian) {
+
+	/**
+	 * JIRA + Confluence login, both optional (public servers need none).
+	 * Data Center personal access token: only {@code token}. Cloud: {@code username} (email) + API {@code token}.
+	 */
+	public record Atlassian(String username, String token) {
+	}
 
 	/**
 	 * Any OpenAI-compatible chat-completions server (D-028): Ollama for dev, the office LLM for the demo.

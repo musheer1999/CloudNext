@@ -59,8 +59,13 @@ failureforge:
   worker:
     # How often the worker checks the queue for new runs (milliseconds).
     poll-interval-ms: 2000
+  # JIRA + Confluence (ticket and wiki links). Optional: public servers need no login. Put real values in
+  # application-local.yml. Data Center: token only (personal access token). Cloud: username (email) + API token.
+  atlassian:
+    username: ${FF_ATLASSIAN_USERNAME:}
+    token: ${FF_ATLASSIAN_TOKEN:}
   gerrit:
-    # Optional. Needed for private Gerrit servers (Gerrit "HTTP password", not your login password).
+    # Optional. Needed for private Gerrit servers and for posting review comments (Gerrit "HTTP password").
     username: ${GERRIT_USERNAME:}
     password: ${GERRIT_PASSWORD:}
   sandbox:

@@ -32,16 +32,27 @@ import org.springframework.stereotype.Component;
 public class DockerTestRunner implements TestRunner {
 
 	static final String REPORTS_DIR = ".ff-reports";
+	public static final String REPORTS_DIR_NAME = REPORTS_DIR;
 	private static final Duration SETUP_TIMEOUT = Duration.ofMinutes(5);
 	private static final Pattern SUREFIRE_VERSION = Pattern.compile("surefire:([0-9][\\w.-]*):test");
 	/** Test-runner add-ons Maven downloads only when tests actually run; fetched in prepare so the offline step has them. */
 	private static final List<String> SUREFIRE_PROVIDERS = List.of("surefire-junit4", "surefire-junit47",
 			"surefire-junit-platform", "surefire-testng");
 
-	/** Copies every JUnit report into /workspace/.ff-reports, keeping folder structure. Single quotes only (Windows argv). */
+	/** Where the compiled main classes of the last full run end up, under {@link #REPORTS_DIR}. */
+	public static final String CLASSES_DIR = "ff-classes";
+
+	/**
+	 * Copies every JUnit report into /workspace/.ff-reports, keeping folder structure, plus the compiled main
+	 * classes (Maven or Gradle, root module) for the Compat check. Single quotes only (Windows argv).
+	 */
 	private static final String GATHER_REPORTS = "mkdir -p /workspace/" + REPORTS_DIR + " && cd /workspace && find . "
 			+ "'(' -path '*/surefire-reports/TEST-*.xml' -o -path '*/test-results/*/TEST-*.xml' ')' "
-			+ "-not -path './" + REPORTS_DIR + "/*' -exec cp --parents '{}' " + REPORTS_DIR + " ';'";
+			+ "-not -path './" + REPORTS_DIR + "/*' -exec cp --parents '{}' " + REPORTS_DIR + " ';'"
+			+ "; for c in target/classes build/classes/java/main; do if [ -d $c ]; then mkdir -p " + REPORTS_DIR
+			+ "/" + CLASSES_DIR + " && cp -r $c/. " + REPORTS_DIR + "/" + CLASSES_DIR + "/; fi; done";
+
+	static final String JAPICMP_VERSION = "0.26.3";
 
 	private final ProcessRunner processes;
 	private final FailureForgeProperties.Sandbox config;
@@ -116,6 +127,51 @@ public class DockerTestRunner implements TestRunner {
 			out.accept("[sandbox: docker] cleaned up containers and volume " + volume);
 		}
 	}
+
+	/**
+	 * Compat check (D-032): japicmp compares the compiled public API of the parent (old) and the patch (new).
+	 * Network on, only to fetch japicmp itself into the shared Maven cache the first time; no project code runs.
+	 *
+	 * @return japicmp's incompatibility lines, e.g. "REMOVED METHOD: PUBLIC(-) STATIC(-) long price(long, int)"
+	 */
+	@Override
+	public List<String> apiBreaks(Path oldClasses, Path newClasses, Consumer<String> out) {
+		String name = ("failureforge-" + oldClasses.getParent().getParent().getParent().getFileName() + "-compat")
+			.toLowerCase().replaceAll("[^a-z0-9_.-]", "-");
+		String volume = name + "-ws";
+		try {
+			mustRun(out, "volume", "create", volume);
+			mustRun(out, "create", "--name", name + "-copy", "-v", volume + ":/workspace", config.docker().image());
+			mustRun(out, "cp", hostPath(oldClasses) + "/.", name + "-copy:/workspace/old");
+			mustRun(out, "cp", hostPath(newClasses) + "/.", name + "-copy:/workspace/new");
+			mustRun(out, "rm", "-f", name + "-copy");
+			String jar = "/tmp/j/japicmp-" + JAPICMP_VERSION + "-jar-with-dependencies.jar";
+			String script = "mvn -B -ntp -q dependency:copy -Dartifact=com.github.siom79.japicmp:japicmp:"
+					+ JAPICMP_VERSION + ":jar:jar-with-dependencies -DoutputDirectory=/tmp/j"
+					+ " && cd /workspace && jar cf /tmp/old.jar -C old . && jar cf /tmp/new.jar -C new ."
+					+ " && java -jar " + jar + " -o /tmp/old.jar -n /tmp/new.jar --only-incompatible -a public";
+			List<String> breaks = new java.util.ArrayList<>();
+			ProcessRunner.Result result = container(name + "-run", volume, true, script, SETUP_TIMEOUT, line -> {
+				out.accept(line);
+				Matcher m = JAPICMP_BREAK.matcher(line);
+				if (m.find() && !m.group(1).startsWith("MODIFIED CLASS") && !m.group(1).startsWith("MODIFIED INTERFACE")) {
+					breaks.add(m.group(1).strip());
+				}
+			});
+			if (!result.ok()) {
+				throw new IllegalStateException("japicmp failed with exit code " + result.exitCode());
+			}
+			return breaks;
+		}
+		finally {
+			Consumer<String> quiet = line -> { };
+			run(quiet, "rm", "-f", name + "-copy", name + "-run");
+			run(quiet, "volume", "rm", "-f", volume);
+		}
+	}
+
+	/** japicmp marks incompatible items with "!" after its ***, --- or +++ marker. */
+	private static final Pattern JAPICMP_BREAK = Pattern.compile("^\\s*(?:\\*\\*\\*|---|\\+\\+\\+)!\\s+(.*)$");
 
 	/** Runs one build step in a fresh container. No network unless {@code network} is true. */
 	private ProcessRunner.Result container(String containerName, String volume, boolean network, String script,

@@ -26,12 +26,12 @@ public class AttackLoop {
 
 	private static final int MAX_ERROR_LINES = 25;
 
-	private final BoundarySpecialist specialist;
+	private final TestWriter writer;
 	private final TestRunner sandbox;
 	private final FailureForgeProperties.Agent config;
 
-	public AttackLoop(BoundarySpecialist specialist, TestRunner sandbox, FailureForgeProperties props) {
-		this.specialist = specialist;
+	public AttackLoop(TestWriter writer, TestRunner sandbox, FailureForgeProperties props) {
+		this.writer = writer;
 		this.sandbox = sandbox;
 		this.config = props.agent();
 	}
@@ -44,12 +44,13 @@ public class AttackLoop {
 	 * @param minimalInput the failure message on the patch, which the test is told to fill with the input values;
 	 *                     jqwik re-runs the shrunk sample last, so this is the smallest counterexample it found
 	 */
-	public record Result(Rule rule, String testClass, String code, int compileAttempts, Status status,
+	public record Result(Rule rule, Specialist specialist, String testClass, String code, int compileAttempts, Status status,
 			TestCaseResult.Status parentStatus, TestCaseResult.Status patchStatus, Verdict verdict,
 			String minimalInput, List<Comparison> comparisons, int tokens) {
 	}
 
-	public Result attack(Rule rule, ChangeContext change, Path patchDir, Path parentDir, Consumer<String> out) {
+	public Result attack(Specialist specialist, Rule rule, ChangeContext change, String constraints, Path patchDir,
+			Path parentDir, Consumer<String> out) {
 		ChangeContext.SourceFile target = change.changedFiles().getFirst();
 		String packageName = target.packageName();
 		String simpleName = "FailureForge" + rule.key().replaceAll("[^A-Za-z0-9]", "") + "Test";
@@ -57,8 +58,8 @@ public class AttackLoop {
 		Path relativeFile = Path.of(target.testDir(), simpleName + ".java");
 		int tokens = 0;
 
-		out.accept("[agent] " + rule.key() + ": Boundary specialist is writing " + simpleName + " ...");
-		BoundarySpecialist.Draft draft = specialist.write(rule, change, packageName, simpleName);
+		out.accept("[agent] " + rule.key() + ": " + specialist.label() + " specialist is writing " + simpleName + " ...");
+		TestWriter.Draft draft = writer.write(specialist, rule, change, constraints, packageName, simpleName);
 		tokens += draft.tokens();
 		out.accept("[agent] " + rule.key() + ": test written by the LLM in " + draft.seconds() + " s");
 
@@ -68,16 +69,16 @@ public class AttackLoop {
 		int attempts = 0;
 		while (true) {
 			attempts++;
-			if (!BoundarySpecialist.callsCodeUnderTest(draft.code(), change)) {
+			if (!TestWriter.callsCodeUnderTest(draft.code(), change)) {
 				// A test that re-implements the logic instead of calling it proves nothing: send it back.
 				if (attempts > config.maxRepairs()) {
 					out.accept("[agent] " + rule.key() + ": the test never calls the code under test -> couldn't check");
-					return new Result(rule, testClass, draft.code(), attempts, Status.COULDNT_COMPILE, null, null,
+					return new Result(rule, specialist, testClass, draft.code(), attempts, Status.COULDNT_COMPILE, null, null,
 							Verdict.COULDNT_CHECK, null, List.of(), tokens);
 				}
 				out.accept("[agent] " + rule.key() + ": the test doesn't call the code under test; asking for a fix ("
 						+ attempts + "/" + config.maxRepairs() + ")");
-				draft = specialist.repair(draft.code(), "The test does not call the code under test ("
+				draft = writer.repair(specialist, draft.code(), "The test does not call the code under test ("
 						+ String.join(", ", changedClassNames(change)) + "). It must call it and check its result, "
 						+ "not re-implement its logic.", packageName, simpleName);
 				tokens += draft.tokens();
@@ -96,13 +97,13 @@ public class AttackLoop {
 			if (attempts > config.maxRepairs()) {
 				out.accept("[agent] " + rule.key() + ": still doesn't compile after " + config.maxRepairs()
 						+ " repairs -> couldn't check this rule");
-				return new Result(rule, testClass, draft.code(), attempts, Status.COULDNT_COMPILE, null, null,
+				return new Result(rule, specialist, testClass, draft.code(), attempts, Status.COULDNT_COMPILE, null, null,
 						Verdict.COULDNT_CHECK, null, List.of(), tokens);
 			}
 			String errors = compilerErrors(lines);
 			out.accept("[agent] " + rule.key() + ": doesn't compile; sending " + errors.lines().count()
 					+ " error lines back to the LLM (repair " + attempts + "/" + config.maxRepairs() + ")");
-			draft = specialist.repair(draft.code(), errors, packageName, simpleName);
+			draft = writer.repair(specialist, draft.code(), errors, packageName, simpleName);
 			tokens += draft.tokens();
 		}
 
@@ -130,7 +131,7 @@ public class AttackLoop {
 				? worst.message() : null;
 		out.accept("[agent] " + rule.key() + ": verdict " + verdict
 				+ (minimal != null ? " | counterexample: " + minimal : ""));
-		return new Result(rule, testClass, draft.code(), attempts, Status.DONE,
+		return new Result(rule, specialist, testClass, draft.code(), attempts, Status.DONE,
 				worst == null ? null : worst.parentStatus(), worst == null ? null : worst.patchStatus(),
 				verdict, minimal, comparisons, tokens);
 	}

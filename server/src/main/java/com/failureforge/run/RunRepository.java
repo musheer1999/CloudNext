@@ -199,6 +199,72 @@ public class RunRepository {
 			.list();
 	}
 
+	public void updateTicketText(long runId, String text) {
+		jdbc.sql("UPDATE run SET ticket_text = :t WHERE id = :id").param("t", text).param("id", runId).update();
+	}
+
+	public void markGerritPosted(long runId) {
+		jdbc.sql("UPDATE run SET gerrit_posted_at = now() WHERE id = :id").param("id", runId).update();
+	}
+
+	/**
+	 * A dispute (D-034): queue a re-run of the same change with the developer's constraint added to the ones
+	 * the disputed run already had.
+	 */
+	public long enqueueDispute(Run disputed, String constraint) {
+		String constraints = (disputed.constraints() == null || disputed.constraints().isBlank() ? ""
+				: disputed.constraints() + "\n") + "- " + constraint.strip();
+		return jdbc.sql("""
+				INSERT INTO run (gerrit_url, jira_url, wiki_urls, ticket_text, constraints, disputed_run_id)
+				VALUES (:gerritUrl, :jiraUrl, :wikiUrls, :ticketText, :constraints, :disputed)
+				RETURNING id
+				""")
+			.param("gerritUrl", disputed.gerritUrl())
+			.param("jiraUrl", disputed.jiraUrl())
+			.param("wikiUrls", disputed.wikiUrls().toArray(String[]::new))
+			.param("ticketText", disputed.ticketText())
+			.param("constraints", constraints)
+			.param("disputed", disputed.id())
+			.query(Long.class)
+			.single();
+	}
+
+	public record Feedback(long id, String ruleKey, String ruleText, String type, String text, Instant createdAt) {
+	}
+
+	public void saveFeedback(long runId, String ruleKey, String ruleText, String repo, String type, String text) {
+		jdbc.sql("""
+				INSERT INTO feedback (run_id, rule_key, rule_text, repo, type, text)
+				VALUES (:runId, :key, :ruleText, :repo, :type, :text)
+				""")
+			.param("runId", runId)
+			.param("key", ruleKey)
+			.param("ruleText", ruleText)
+			.param("repo", repo)
+			.param("type", type)
+			.param("text", text)
+			.update();
+	}
+
+	public List<Feedback> findFeedback(long runId) {
+		return jdbc.sql("SELECT * FROM feedback WHERE run_id = :runId ORDER BY id")
+			.param("runId", runId)
+			.query((rs, n) -> new Feedback(rs.getLong("id"), rs.getString("rule_key"), rs.getString("rule_text"),
+					rs.getString("type"), rs.getString("text"), instant(rs.getTimestamp("created_at"))))
+			.list();
+	}
+
+	/** Rules developers marked FALSE POSITIVE on this repo before (per-repo memory, design doc section 8). */
+	public List<String> falsePositiveRules(String repo) {
+		if (repo == null) {
+			return List.of();
+		}
+		return jdbc.sql("SELECT DISTINCT rule_text FROM feedback WHERE repo = :repo AND type = 'FALSE_POSITIVE'")
+			.param("repo", repo)
+			.query(String.class)
+			.list();
+	}
+
 	public void addTokens(long runId, int tokens) {
 		jdbc.sql("UPDATE run SET tokens_used = tokens_used + :t WHERE id = :id").param("t", tokens).param("id", runId).update();
 	}
@@ -227,11 +293,12 @@ public class RunRepository {
 		jdbc.sql("""
 				INSERT INTO attack (run_id, rule_id, specialist, test_class, test_code, compile_attempts,
 				                    parent_status, patch_status, verdict, minimal_input, status)
-				VALUES (:runId, :ruleId, 'BOUNDARY', :testClass, :code, :attempts,
+				VALUES (:runId, :ruleId, :specialist, :testClass, :code, :attempts,
 				        :parentStatus, :patchStatus, :verdict, :minimal, :status)
 				""")
 			.param("runId", runId)
 			.param("ruleId", ruleId)
+			.param("specialist", a.specialist().name())
 			.param("testClass", a.testClass())
 			.param("code", a.code())
 			.param("attempts", a.compileAttempts())
@@ -245,14 +312,14 @@ public class RunRepository {
 
 	/** A rule plus the attack on it (if it was attacked), for the portal. */
 	public record RuleView(String key, String text, String type, String sourceQuote, String source,
-			String codeLocation, String status, String dropReason, String testClass, String testCode,
+			String codeLocation, String status, String dropReason, String specialist, String testClass, String testCode,
 			Integer compileAttempts, String parentStatus, String patchStatus, String verdict, String minimalInput,
 			String attackStatus) {
 	}
 
 	public List<RuleView> findRules(long runId) {
 		return jdbc.sql("""
-				SELECT r.*, a.test_class, a.test_code, a.compile_attempts, a.parent_status, a.patch_status,
+				SELECT r.*, a.specialist, a.test_class, a.test_code, a.compile_attempts, a.parent_status, a.patch_status,
 				       a.verdict, a.minimal_input, a.status AS attack_status
 				FROM rule r LEFT JOIN attack a ON a.rule_id = r.id
 				WHERE r.run_id = :runId ORDER BY r.id
@@ -260,7 +327,7 @@ public class RunRepository {
 			.param("runId", runId)
 			.query((rs, n) -> new RuleView(rs.getString("rule_key"), rs.getString("text"), rs.getString("type"),
 					rs.getString("source_quote"), rs.getString("source"), rs.getString("code_location"),
-					rs.getString("status"), rs.getString("drop_reason"), rs.getString("test_class"),
+					rs.getString("status"), rs.getString("drop_reason"), rs.getString("specialist"), rs.getString("test_class"),
 					rs.getString("test_code"), nullableInt(rs, "compile_attempts"), rs.getString("parent_status"),
 					rs.getString("patch_status"), rs.getString("verdict"), rs.getString("minimal_input"),
 					rs.getString("attack_status")))
@@ -300,6 +367,9 @@ public class RunRepository {
 			rs.getString("jira_url"),
 			stringList(rs.getArray("wiki_urls")),
 			rs.getString("ticket_text"),
+			rs.getString("constraints"),
+			rs.getObject("disputed_run_id") == null ? null : rs.getLong("disputed_run_id"),
+			instant(rs.getTimestamp("gerrit_posted_at")),
 			rs.getInt("tokens_used"),
 			rs.getString("gerrit_project"),
 			nullableInt(rs, "gerrit_change"),
