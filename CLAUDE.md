@@ -4,7 +4,7 @@
 > It is the single source of truth for what we are building, what is decided, and where we are.
 > Update it every time a decision is made or a phase moves.
 
-Last updated: 2026-10-11 (Phase 2 step 2b done, D-027)
+Last updated: 2026-10-11 (Phase 2 steps 2a+2b done, D-029)
 Owner: Musheer Ahmad (Samsung R&D Institute, Noida)
 
 Full design doc: docs/DEVELOPMENT_GUIDE.md (read the relevant section before building each phase).
@@ -23,7 +23,7 @@ FailureForge is an AI agent for a Samsung internal agent contest. It takes a Ger
 | --- | --- |
 | Idea + design | Done (design doc shared with team) |
 | Phase 1 — pipeline skeleton | **Done 2026-10-11.** Portal → API → Postgres queue → worker → Gerrit REST → git checkout → **Docker sandbox** (D-026) → JUnit results + live log in portal. Verified on GerritHub change 1236098, run #6: 88/88 tests pass in 72 s, test step with `--network none`, no containers left behind. Known gaps: Gradle path in Docker not yet tested on a real repo; no automated test of the timeout path. |
-| Phase 2 — rules + Boundary specialist | **In progress.** Steps: 2a sample repo with planted bug (needs owner's GerritHub repo) · **2b parent vs patch + verdict engine: done 2026-10-11 (D-027)** · 2c read diff/JIRA/wiki · 2d LLM client + rule extraction · 2e Boundary specialist + test writer + repair loop · 2f end-to-end demo. LLM for dev: Ollama on the laptop (free); model being chosen by a test (qwen3.5:9b vs qwen3:8b). |
+| Phase 2 — rules + Boundary specialist | **In progress.** Steps: **2a sample repo with planted bug: done 2026-10-11 (D-029, change 1254028)** · **2b parent vs patch + verdict engine: done 2026-10-11 (D-027)** · 2c read diff/JIRA/wiki · 2d LLM client + rule extraction · 2e Boundary specialist + test writer + repair loop · 2f end-to-end demo. LLM for dev: Ollama on the laptop (free); model being chosen by a test (qwen3.5:9b vs qwen3:8b). |
 | Code repository | Local git repo at `D:\CloudNext`, branch `main` (`server/`, `portal/`, `docs/`). First commit fd1c691 on 2026-10-11 (Phase 1). Pushed to GitHub (public): https://github.com/musheer1999/CloudNext |
 | LLM in use | None yet. Dev: Ollama on the laptop (free); demo: office MuseGlimmer 30B (D-028). Claude API not used. |
 | Dev machine (personal laptop) | JDK 23, Node 24.21, PostgreSQL 16 (Windows service; may need a manual start), git, WSL2 Ubuntu + Docker Engine 29.1 (called as `wsl -d Ubuntu -e docker`). Port 8080 taken by Apache httpd. |
@@ -224,6 +224,12 @@ Status: **Decided** = team/owner confirmed · **Proposed** = in design doc, not 
 - Design: `LlmClient` targets OpenAI-compatible chat completions, configured by base URL, model, optional API key, `bypass-proxy` flag, and an `extra-body` map (for `chat_template_kwargs`). Dev uses Ollama, which serves the same `/v1/chat/completions` API, so the office switch is config only. Keep each LLM answer well under 2048 tokens. Don't depend on tool calling (unknown support on the office server); ask for JSON in the prompt and validate/retry in code.
 - Office step (senior's advice): call the endpoint once with curl on the office laptop and check the response matches what the code expects.
 - This refines D-004 (LLM provider now = Ollama for dev, office LLM for the demo; the Claude API is not used, since a Claude.ai subscription doesn't cover API calls).
+
+### D-029 — Demo sample repo with a planted boundary bug
+- Date: 2026-10-11 · Status: Decided (owner set up the repos)
+- Decision: `failureforge-sample` (github.com/musheer1999/failureforge-sample, imported into GerritHub as `musheer1999/failureforge-sample`): a tiny Maven/JUnit 5 price calculator (`Pricing.finalPrice(pricePaise, discountPercent, member)`). Base commit 0400608 is correct. Gerrit change **1254028** "Members get an extra 5% off (SHOP-42)" adds +5% for members but doesn't cap the total at 100%, so member + coupon ≥ 96% gives a negative price (₹1 item, 96% → −1 paise). Its tests (7) pass on both sides. The ticket text is in `docs/demo/SHOP-42.md` (acceptance criterion 4: price never negative). Local clone: `D:\failureforge-sample`. No jqwik in its pom on purpose: FailureForge must add it itself.
+- Baseline (run #8, no AI): 5 NOTHING_FOUND + 2 NEW_TEST, 0 counterexamples, 33 s. **Phase 2 done criterion:** the same change gives a COUNTEREXAMPLE for the "never negative" rule with a shrunk input around discount = 96, member = true.
+- Uploading changes: `git push https://musheer1999@review.gerrithub.io/a/musheer1999/failureforge-sample HEAD:refs/for/main` (commit needs a `Change-Id:` line; password = GerritHub HTTP token, entered in the Windows login prompt).
 
 ## 6. Open questions
 
